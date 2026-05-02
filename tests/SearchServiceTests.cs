@@ -380,5 +380,57 @@ namespace Blendkit.Rhino.Tests
             var url = SearchService.BuildUrlQuery("vase", "PRINTABLE", 15, f);
             Assert.Contains("+faceCount_lte:50000", url);
         }
+
+        // -------- Category-in-URL regression --------
+        // Bug history: panel.RefreshCategoryDropdown silently cleared
+        // _categorySlug when the tree wasn't loaded yet. Result was a
+        // category-on-paper / no-category-on-the-wire mismatch — the
+        // panel showed "📁 Furniture" but the search URL went out
+        // without category_subtree. This test pins the URL contract
+        // independently from the panel; if BuildUrlQuery ever decides
+        // to drop categories under specific conditions, we'll know.
+
+        [Fact]
+        public void Category_subtree_present_for_every_asset_type_with_default_polycount()
+        {
+            // Reproduces the exact failure mode the user reported: MODEL
+            // search with the default "Low (≤10k)" polycount and a
+            // category selected — URL had faceCount_lte:10000 but no
+            // category_subtree.
+            var f = Empty();
+            f.Category = "furniture";
+            f.PolycountMax = 10000;
+            var url = SearchService.BuildUrlQuery("", "MODEL", 15, f);
+            Assert.Contains("+category_subtree:furniture", url);
+            Assert.Contains("+faceCount_lte:10000", url);
+        }
+
+        [Fact]
+        public void Category_subtree_with_paginating_load_more_keeps_category()
+        {
+            // Pagination uses the server-supplied `next` URL verbatim
+            // (we don't re-build), so technically not exercised by
+            // BuildUrlQuery. What we DO control: page-1 must include
+            // category_subtree, otherwise the server's next URLs can't
+            // possibly carry it forward.
+            var f = Empty();
+            f.Category = "vehicles";
+            f.Order = "-last_blend_upload";
+            var url = SearchService.BuildUrlQuery("", "MODEL", 15, f);
+            Assert.Contains("+category_subtree:vehicles", url);
+            Assert.Contains("+order:-last_blend_upload", url);
+        }
+
+        [Fact]
+        public void Category_url_encoded_for_non_ascii_slugs()
+        {
+            // Some BlenderKit categories carry non-ASCII slugs. The server
+            // rejects raw unicode in `+category_subtree:`, so we URL-encode.
+            var f = Empty();
+            f.Category = "café-things";
+            var url = SearchService.BuildUrlQuery("", "MODEL", 15, f);
+            // %2D == "-", verify the dash and the é round-trip cleanly.
+            Assert.Contains("+category_subtree:caf%C3%A9-things", url);
+        }
     }
 }

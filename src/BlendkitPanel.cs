@@ -909,20 +909,43 @@ namespace Blendkit.Rhino
         {
             // Compact icon-only button when no category, or icon + short
             // label when one is picked. The chip bar shows the full path.
+            //
+            // CRITICAL: never clear `_categorySlug` from inside this method.
+            // It runs at three moments where clearing would silently erase
+            // the user's selection:
+            //   1. Panel constructor — categories haven't been fetched yet
+            //      (the tree is empty), so the saved-from-last-session
+            //      slug always lookup-failed and got wiped before search.
+            //      Result: every fresh panel open dropped the user's
+            //      category and the URL went out without category_subtree.
+            //   2. Asset-type change — the slug is fine for the previous
+            //      type but may not exist in the new tree. Better to keep
+            //      it (server returns 0 hits, user sees the mismatch and
+            //      clears it themselves) than to silently lose state.
+            //   3. CategoriesService.Updated event — same logic; tree may
+            //      lag the slug, especially for less common asset types.
+            // Clearing the slug is now the user's job — via "All
+            // categories" in the menu, the chip-bar X, or "Clear all
+            // filters". Programmatically it only happens during explicit
+            // resets (line ~2148) and tab restore overwrites (line ~1915).
             var at = CurrentAssetType();
-            if (!string.IsNullOrEmpty(_categorySlug))
+            if (string.IsNullOrEmpty(_categorySlug))
             {
-                if (FindCategoryName(at, _categorySlug) is string label)
-                    _category.Text = "📁 " + Truncate(label, 14);
-                else
-                {
-                    _categorySlug = "";
-                    _category.Text = "📁";
-                }
+                _category.Text = "📁";
+                return;
+            }
+            if (FindCategoryName(at, _categorySlug) is string label)
+            {
+                _category.Text = "📁 " + Truncate(label, 14);
             }
             else
             {
-                _category.Text = "📁";
+                // Slug is set but not resolvable in the current tree
+                // (yet, or for this asset type). Show the raw slug so
+                // the user has visible feedback that a filter is active,
+                // instead of an icon-only button that looks like nothing
+                // is selected.
+                _category.Text = "📁 " + Truncate(_categorySlug, 14);
             }
         }
 
