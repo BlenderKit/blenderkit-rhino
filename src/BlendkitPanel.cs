@@ -949,13 +949,35 @@ namespace Blendkit.Rhino
         private void ShowCategoryMenu()
         {
             var at = CurrentAssetType();
+            var tree = CategoriesService.TreeForAssetType(at);
+            BkLog.W($"ShowCategoryMenu: assetType={at} tree.Count={tree.Count}");
+
             var menu = new ContextMenu();
             var anyItem = new ButtonMenuItem { Text = "All categories" };
             anyItem.Click += (s, e) => SelectCategory("", "All categories");
             menu.Items.Add(anyItem);
-            menu.Items.AddSeparator();
-            foreach (var node in CategoriesService.TreeForAssetType(at))
-                menu.Items.Add(BuildCategoryMenuItem(node));
+
+            if (tree.Count == 0)
+            {
+                // Empty tree usually means the categories_update task hasn't
+                // landed yet — the Go client fetches /api/v1/categories on
+                // first /report subscription; on cold-start we can race it.
+                // Surface a clear placeholder instead of an unexplained
+                // gap below "All categories".
+                menu.Items.AddSeparator();
+                var placeholder = new ButtonMenuItem
+                {
+                    Text = "(loading…)",
+                    Enabled = false,
+                };
+                menu.Items.Add(placeholder);
+            }
+            else
+            {
+                menu.Items.AddSeparator();
+                foreach (var node in tree)
+                    menu.Items.Add(BuildCategoryMenuItem(node));
+            }
             menu.Show(_category);
         }
 
@@ -1030,7 +1052,6 @@ namespace Blendkit.Rhino
             }
             var desc = GetS("description");
             var license = GetS("license");
-            var slug = GetS("slug");
             var assetType = GetS("assetType");
             var tagList = new System.Collections.Generic.List<string>();
             if (hit.TryGetProperty("tags", out var tagsEl) && tagsEl.ValueKind == JsonValueKind.Array)
@@ -1438,15 +1459,11 @@ namespace Blendkit.Rhino
             webBtn.Click += (s, e) => OpenAssetOnWeb(hit);
             actionsCol.AddRow(webBtn);
 
-            var commentsBtn = new Button { Text = "Comments" };
-            commentsBtn.Click += (s, e) =>
-            {
-                var url = string.IsNullOrEmpty(slug)
-                    ? "https://www.blenderkit.com/asset-gallery/"
-                    : $"https://www.blenderkit.com/asset-gallery-detail/{slug}/#comments";
-                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
-            };
-            actionsCol.AddRow(commentsBtn);
+            // Comments button used to live here and just deep-linked to
+            // #comments on the asset gallery page. It was a confusing UX
+            // (the popup itself can't host comments — that thread is online-
+            // only), so it now leaves through "Open on blenderkit.com" only.
+
             // Close button removed — Rhino dialog windows already get
             // a native ✕ in the title bar plus Esc / Alt+F4 handling,
             // so a duplicate Close button just steals real estate from
@@ -1625,11 +1642,22 @@ namespace Blendkit.Rhino
 
         private void OpenAssetOnWeb(JsonElement hit)
         {
-            var slug = hit.TryGetProperty("slug", out var sl) ? sl.GetString() : "";
-            var assetType = hit.TryGetProperty("assetType", out var at) ? at.GetString() : "model";
-            var url = string.IsNullOrEmpty(slug)
+            // The asset-gallery-detail URL is keyed by the asset's UUID, not
+            // its slug — same as paths.get_asset_gallery_url() in the Blender
+            // addon: it accepts asset_data["id"] or asset_data["assetBaseId"].
+            // We try id first (newer search payloads) and fall back to
+            // assetBaseId (older / detail-API payloads). Slug used to be
+            // here and silently produced 404s.
+            string assetId = "";
+            if (hit.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+                assetId = idEl.GetString() ?? "";
+            if (string.IsNullOrEmpty(assetId)
+                && hit.TryGetProperty("assetBaseId", out var abEl)
+                && abEl.ValueKind == JsonValueKind.String)
+                assetId = abEl.GetString() ?? "";
+            var url = string.IsNullOrEmpty(assetId)
                 ? "https://www.blenderkit.com/asset-gallery/"
-                : $"https://www.blenderkit.com/asset-gallery-detail/{slug}/";
+                : $"https://www.blenderkit.com/asset-gallery-detail/{assetId}/";
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
 
@@ -3729,17 +3757,28 @@ namespace Blendkit.Rhino
             }
             BkLog.W("PROFILE keys: " + string.Join(", ", keys));
 
-            // BlenderKit exposes any of several flags depending on account
-            // type. canEditAllAssets is the original validator; staff /
-            // superuser also unlock validator-only UI. Treat any of them as
-            // "show debug widgets".
+            // BlenderKit's /api/v1/me/ returns canEditAllAssets at the
+            // *top level* of the response, NOT inside the `user` sub-object
+            // (mirrors blenderkit/search.py:handle_get_user_profile in the
+            // Blender add-on, which reads `task.result.get("canEditAllAssets")`).
+            // We probe the top-level result first, then fall back to the user
+            // object as a defensive measure for older / nested API shapes.
+            // Some accounts also expose isStaff / isSuperuser; treat any
+            // truthy match as "show validator widgets".
             bool isValidator = false;
+            bool TryFlag(JsonElement obj, string key)
+            {
+                if (!obj.TryGetProperty(key, out var f)) return false;
+                if (f.ValueKind == JsonValueKind.True) return true;
+                if (f.ValueKind == JsonValueKind.String
+                    && string.Equals(f.GetString(), "true", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                return false;
+            }
             foreach (var key in new[] { "canEditAllAssets", "isStaff", "is_staff",
                                         "isSuperuser", "is_superuser", "staff", "superuser" })
             {
-                if (!user.TryGetProperty(key, out var f)) continue;
-                if (f.ValueKind == JsonValueKind.True
-                    || (f.ValueKind == JsonValueKind.String && f.GetString()?.ToLowerInvariant() == "true"))
+                if (TryFlag(result, key) || TryFlag(user, key))
                 {
                     isValidator = true;
                     BkLog.W($"validator flag matched: {key}");

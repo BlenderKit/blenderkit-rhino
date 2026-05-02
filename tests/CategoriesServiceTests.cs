@@ -124,5 +124,88 @@ namespace Blendkit.Rhino.Tests
             CategoriesService.Ingest(Parse(@"{""error"": ""nope""}"));
             // No state guarantees here other than "did not crash".
         }
+
+        // --- Regression coverage: the panel hands the raw `result` JSON node
+        //     from a /report task envelope. Categories have broken multiple
+        //     times by silent reshapes of that result; these tests pin the
+        //     contract from the consumer's side so we catch it the next time.
+
+        [Fact]
+        public void Ingest_handles_results_envelope()
+        {
+            // BlenderKit's REST /api/v1/categories/ wraps the array in
+            // {"count":..., "results":[...]}. The Go client currently
+            // unwraps before forwarding, but if it ever stops (or another
+            // host adds a wrapper) we still want categories to load.
+            CategoriesService.Ingest(Parse(@"{
+                ""count"": 1,
+                ""results"": [
+                  { ""name"": ""Model"", ""slug"": ""model"",
+                    ""children"": [{ ""name"": ""Plants"", ""slug"": ""plants"", ""children"": [] }] }
+                ]
+            }"));
+            var tree = CategoriesService.TreeForAssetType("MODEL");
+            Assert.Single(tree);
+            Assert.Equal("plants", tree[0].Slug);
+        }
+
+        [Fact]
+        public void Ingest_handles_categories_envelope()
+        {
+            CategoriesService.Ingest(Parse(@"{
+                ""categories"": [
+                  { ""name"": ""HDR"", ""slug"": ""hdr"",
+                    ""children"": [{ ""name"": ""Sky"", ""slug"": ""sky"", ""children"": [] }] }
+                ]
+            }"));
+            var tree = CategoriesService.TreeForAssetType("HDR");
+            Assert.Single(tree);
+            Assert.Equal("sky", tree[0].Slug);
+        }
+
+        [Fact]
+        public void Ingest_tolerates_extra_fields_from_real_api()
+        {
+            // Shape lifted directly from /api/v1/categories/ — the real
+            // Category struct has thumbnail / assetCount / order / active
+            // / metaKeywords on every node. Ingest must ignore the noise
+            // and pull just name+slug+children.
+            CategoriesService.Ingest(Parse(@"
+            [
+              {
+                ""name"": ""Model"", ""slug"": ""model"",
+                ""active"": true, ""thumbnail"": ""https://example.com/t.png"",
+                ""thumbnailWidth"": 256, ""thumbnailHeight"": 256,
+                ""order"": 0, ""alternateTitle"": """", ""alternateUrl"": """",
+                ""description"": """", ""metaKeywords"": """", ""metaExtra"": """",
+                ""assetCount"": 1234, ""assetCountCumulative"": 9999,
+                ""children"": [
+                  {
+                    ""name"": ""Furniture"", ""slug"": ""furniture"",
+                    ""active"": true, ""thumbnail"": """", ""thumbnailWidth"": 0, ""thumbnailHeight"": 0,
+                    ""order"": 0, ""alternateTitle"": """", ""alternateUrl"": """",
+                    ""description"": """", ""metaKeywords"": """", ""metaExtra"": """",
+                    ""assetCount"": 50, ""assetCountCumulative"": 50,
+                    ""children"": []
+                  }
+                ]
+              }
+            ]"));
+            var tree = CategoriesService.TreeForAssetType("MODEL");
+            Assert.Single(tree);
+            Assert.Equal("furniture", tree[0].Slug);
+            Assert.Equal("Furniture", tree[0].Name);
+        }
+
+        [Fact]
+        public void Ingest_empty_array_clears_tree()
+        {
+            // Seed.
+            CategoriesService.Ingest(Parse(SampleResponse));
+            Assert.NotEmpty(CategoriesService.TreeForAssetType("MODEL"));
+            // Empty array (e.g. server returns nothing) should reset state.
+            CategoriesService.Ingest(Parse(@"[]"));
+            Assert.Empty(CategoriesService.TreeForAssetType("MODEL"));
+        }
     }
 }

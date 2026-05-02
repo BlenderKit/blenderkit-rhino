@@ -34,10 +34,30 @@ namespace Blendkit.Rhino.Infra
         public static event EventHandler Updated;
 
         /// <summary>Replace the in-memory tree with the result of a `categories_update` task.</summary>
+        /// <param name="result">
+        /// Either the raw top-level array
+        /// (<c>[{name, slug, children, ...}, ...]</c> — what the Go client
+        /// currently sends as task.result), OR an object wrapping the array
+        /// under one of the historical keys (<c>results</c>, <c>categories</c>,
+        /// <c>data</c>). Handling both makes the ingest survive API/payload
+        /// reshuffles that have broken category loading three or four times.
+        /// </param>
         public static void Ingest(JsonElement result)
         {
-            // Result shape is an array of top-level entries like
-            //   { name: "Model", slug: "model", children: [ ... ] }
+            // Unwrap common envelope shapes so a future Go client update
+            // that decides to wrap the array can't silently break the panel.
+            if (result.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var key in new[] { "results", "categories", "data" })
+                {
+                    if (result.TryGetProperty(key, out var inner)
+                        && inner.ValueKind == JsonValueKind.Array)
+                    {
+                        result = inner;
+                        break;
+                    }
+                }
+            }
             if (result.ValueKind != JsonValueKind.Array) return;
             var freshFlat = new Dictionary<string, List<(string, string)>>();
             var freshTree = new Dictionary<string, List<CategoryNode>>();
