@@ -6,30 +6,25 @@ namespace Blendkit.Rhino.Infra
 {
     /// <summary>
     /// POST /run_blender_script with the bundled `export_glb` recipe.
-    /// The Go client spawns Blender, streams progress as task updates,
-    /// and finishes with result.file_path pointing at the .glb.
-    ///
-    /// We tag the task type via the standard run_blender_script flow;
-    /// the calling site stores the task_id in <see cref="BlendkitPanel"/>'s
-    /// _pendingConvertActions so the panel can route "run_blender_script"
-    /// finishes to <c>HandleConvertTask</c> alongside the legacy
-    /// "blend_to_glb" task type.
-    ///
-    /// Old endpoint (/blend_to_glb) still works as a thin shim on the
-    /// server side — kept for back-compat — but new code should call
-    /// the unified endpoint with `script_id="export_glb"` directly.
+    /// The Go client spawns the Blender we point it at, streams progress
+    /// as task updates, and finishes with result.file_path pointing at
+    /// the .glb. The calling site stores the task_id in
+    /// <see cref="BlendkitPanel"/>'s _pendingConvertActions so the panel
+    /// can route "run_blender_script" finishes to <c>HandleConvertTask</c>.
     /// </summary>
     public static class BlenderConvertService
     {
         public static async Task<string> StartAsync(string blendPath, int appId)
         {
             var glbPath = Path.ChangeExtension(blendPath, ".glb");
+            var blenderExe = BlenderService.FindBlenderExe();
             var payload = new
             {
-                script_id      = "export_glb",
-                blend_path     = blendPath,
-                output_path    = glbPath,
-                status_message = "Converting…",
+                script_id        = "export_glb",
+                blender_exe_path = blenderExe ?? "",
+                blend_path       = blendPath,
+                output_path      = glbPath,
+                status_message   = "Converting…",
                 @params = new
                 {
                     output_path  = glbPath,

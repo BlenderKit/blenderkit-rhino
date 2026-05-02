@@ -4,14 +4,14 @@ using System.IO;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// Local Blender install discovery — used as a fast precheck before the
-    /// panel kicks off a .blend → .glb conversion. The conversion itself
-    /// runs on the Go client (POST /blend_to_glb); see BlenderConvertService.
-    /// Mirroring the search here keeps the UI responsive without a round
-    /// trip when Blender isn't installed.
+    /// Local Blender install discovery. Used both as a UI precheck
+    /// (don't bother starting a conversion when Blender isn't installed)
+    /// and to populate the `blender_exe_path` field on
+    /// /run_blender_script requests — the Go client trusts whatever
+    /// path the host sends instead of doing its own platform-specific
+    /// install-path scan.
     ///
-    /// Strategy (must stay in sync with FindBlenderExe in
-    /// client/blender_convert.go):
+    /// Strategy:
     ///   1. Discover blender.exe in standard install locations + PATH.
     ///   2. Pick the highest-versioned Foundation install when several exist.
     /// </summary>

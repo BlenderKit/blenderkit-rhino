@@ -42,7 +42,7 @@ namespace Blendkit.Rhino.Infra
         /// the Go client so the server decides which variant to serve.
         /// </summary>
         public static async Task<string> StartAsync(JsonElement hitJson, string apiKey,
-            string globalDir, string resolution = "resolution_2K", string modelFormat = "")
+            string globalDir, string resolution = "resolution_2K")
         {
             var pid = Process.GetCurrentProcess().Id;
             var assetType = hitJson.TryGetProperty("assetType", out var at) ? at.GetString() : "model";
@@ -71,11 +71,6 @@ namespace Blendkit.Rhino.Infra
                 app_id = pid,
                 download_dirs = new[] { downloadDir },
                 resolution = resolution,
-                // Empty default = pick .blend by resolution. Server-side
-                // glTFs are Draco-compressed and Rhino's importer can't read
-                // those, so we now download .blends and convert locally via
-                // a headless Blender process (BlenderService).
-                model_format = modelFormat ?? "",
                 asset_data = assetData,
                 PREFS = new
                 {

@@ -34,14 +34,16 @@ namespace Blendkit.Rhino.Infra
 
             // Host-specific recipe — stays in the plug-in (not bundled with
             // the client) because it builds a Rhino-PBR-shaped JSON. We pass
-            // its absolute path via script_path; params travels as a JSON
-            // map (cleaner than the legacy positional argv).
+            // its absolute path via script_path and tell the client which
+            // Blender to spawn via blender_exe_path.
+            var blenderExe = BlenderService.FindBlenderExe();
             var payload = new
             {
-                script_path    = scriptPath,
-                blend_path     = blendPath,
-                output_path    = jsonPath,
-                status_message = "Extracting material…",
+                script_path      = scriptPath,
+                blender_exe_path = blenderExe ?? "",
+                blend_path       = blendPath,
+                output_path      = jsonPath,
+                status_message   = "Extracting material…",
                 @params = new
                 {
                     output_path = jsonPath,

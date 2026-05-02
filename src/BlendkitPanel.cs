@@ -3536,17 +3536,6 @@ namespace Blendkit.Rhino
                 HandleLoginTask(task);
             else if (type == "categories_update" && status == "finished")
                 HandleCategoriesTask(task);
-            else if (type == "blend_to_glb")
-                // Legacy task type — kept for back-compat with older
-                // client builds. The unified /run_blender_script flow
-                // below handles new conversions; either path lands in
-                // HandleConvertTask. Always route — the Go client's
-                // cache fast-path can emit "finished" before our action
-                // is registered. HandleConvertTask buffers orphan
-                // results so ConvertForDrop can pick them up.
-                HandleConvertTask(status, task, taskId);
-            else if (type == "blend_to_material_json")
-                HandleMaterialJsonTask(status, task, taskId);
             else if (type == "run_blender_script")
             {
                 // The unified /run_blender_script endpoint feeds both
@@ -3554,6 +3543,9 @@ namespace Blendkit.Rhino
                 // host-specific material extraction (script_path=…).
                 // We disambiguate purely by which queue holds the
                 // task_id — no enum on the task payload needed.
+                // Always route — the Go client's cache fast-path can
+                // emit "finished" before our action is registered;
+                // HandleConvertTask buffers orphan results.
                 if (_pendingConvertActions.ContainsKey(taskId))
                     HandleConvertTask(status, task, taskId);
                 else if (_pendingMaterialDrops.ContainsKey(taskId))
