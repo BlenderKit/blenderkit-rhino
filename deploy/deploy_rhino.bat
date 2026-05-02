@@ -73,6 +73,23 @@ if not exist "%TARGET%"         mkdir "%TARGET%"
 if not exist "%TARGET%\python"  mkdir "%TARGET%\python"
 if not exist "%TARGET%\client"  mkdir "%TARGET%\client"
 
+REM ---- Purge stale .rhp files from previous builds ----
+REM Both the pre-rename build (BlenderKitRhino.rhp) and the new
+REM build (BlendkitRhino.rhp) share the same plug-in GUID, so if
+REM both end up in the folder Rhino can load whichever it indexed
+REM first. Delete every .rhp that isn't the one we're about to
+REM ship; the fresh copy lands a few lines below.
+for %%R in ("%TARGET%\*.rhp") do (
+    if /I not "%%~nxR"=="BlendkitRhino.rhp" (
+        del /Q "%%R" 2>nul
+        if errorlevel 1 (
+            echo [deploy] WARNING: could not delete stale %%~nxR - is Rhino still running?
+        ) else (
+            echo [deploy] Removed stale %%~nxR.
+        )
+    )
+)
+
 REM ---- Build C# shell (optional) ----
 if "%DO_BUILD%"=="1" (
     where dotnet >nul 2>&1

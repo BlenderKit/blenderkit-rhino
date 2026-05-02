@@ -69,6 +69,25 @@ fi
 
 mkdir -p "$TARGET" "$TARGET/python" "$TARGET/client"
 
+# Purge stale .rhp files from previous builds. Pre-rename builds
+# (BlenderKitRhino.rhp) and the current build (BlendkitRhino.rhp)
+# share the same plug-in GUID, so if both end up in the folder
+# Rhino loads whichever it indexed first — leading to the new code
+# silently not running. Delete every .rhp that isn't ours; we copy
+# the fresh one in below.
+shopt -s nullglob
+for rhp in "$TARGET"/*.rhp; do
+    base="$(basename "$rhp")"
+    if [ "$base" != "BlendkitRhino.rhp" ]; then
+        if rm -f "$rhp"; then
+            echo "[deploy] Removed stale $base."
+        else
+            echo "[deploy] WARNING: could not delete stale $base — is Rhino still running?"
+        fi
+    fi
+done
+shopt -u nullglob
+
 if [ "$DO_BUILD" = "1" ]; then
     if ! command -v dotnet >/dev/null 2>&1; then
         echo "[deploy] dotnet not found on PATH — install the .NET SDK and retry."
