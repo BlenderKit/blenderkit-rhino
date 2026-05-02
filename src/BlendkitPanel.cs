@@ -142,12 +142,18 @@ namespace Blendkit.Rhino
         // tabs swaps the visible UI accordingly. _tabs[0] always exists.
         private readonly List<TabState> _tabs = new List<TabState> { new TabState() };
         private int _activeTab;
-        private readonly StackLayout _tabBar = new StackLayout
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 2,
-            Padding = new Padding(0, 2),
-        };
+        // The tab bar is hosted in a Panel (not a StackLayout) so we can
+        // re-layout it on width change — the Eto StackLayout doesn't wrap
+        // and a long row of tabs gets clipped on narrow panels. RebuildTabBar
+        // populates _tabBarButtons; LayoutTabBar packs them into one or more
+        // horizontal sub-rows based on _tabBar.Width.
+        private readonly Panel _tabBar = new Panel { Padding = new Padding(0, 2) };
+        private readonly List<Control> _tabBarButtons = new List<Control>();
+        // Width estimates for the wrap math. Real measurement isn't available
+        // until Eto has laid out the buttons; for our purposes a coarse
+        // estimate is fine because the tab labels are truncated to 14 chars
+        // and back/forward/plus icons have a fixed footprint.
+        private const int TabBarSpacing = 2;
 
         // Guard so the panel constructor's "restore last session" UI
         // assignments (which fire SelectedIndexChanged / TextChanged
@@ -408,15 +414,66 @@ namespace Blendkit.Rhino
             // user's request — recent queries still feed the URL
             // builder via _recentQueries (stored in Settings) and are
             // surfaced through the asset-type swap re-search anyway.
-            var searchRow = new DynamicLayout();
-            searchRow.BeginHorizontal();
-            searchRow.Add(_assetType);
-            searchRow.Add(_searchBox, true);
-            searchRow.Add(clearSearchBtn);
-            searchRow.Add(_searchBtn);
-            searchRow.Add(_category);
-            searchRow.Add(filtersToggleBtn);
-            searchRow.EndHorizontal();
+            //
+            // The row is hosted in a Panel and rebuilt on size change so
+            // narrow panels get a two-line layout instead of a crushed
+            // single line. The wide layout has everything inline; the
+            // compact layout puts the auxiliary buttons (clear / category /
+            // filters toggle) on a second row, keeping the search box and
+            // its asset-type / search action together where they're
+            // most useful.
+            var searchRow = new Panel();
+            void LayoutSearchRow()
+            {
+                int avail = searchRow.Width;
+                bool compact = avail > 0 && avail < 360;
+                if (compact)
+                {
+                    var top = new StackLayout
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 4,
+                        Items =
+                        {
+                            new StackLayoutItem(_assetType),
+                            new StackLayoutItem(_searchBox, expand: true),
+                            new StackLayoutItem(_searchBtn),
+                        },
+                    };
+                    var bottom = new StackLayout
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 4,
+                        Items = { clearSearchBtn, _category, filtersToggleBtn },
+                    };
+                    searchRow.Content = new StackLayout
+                    {
+                        Orientation = Orientation.Vertical,
+                        Spacing = 4,
+                        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                        Items =
+                        {
+                            new StackLayoutItem(top, expand: true),
+                            new StackLayoutItem(bottom, expand: true),
+                        },
+                    };
+                }
+                else
+                {
+                    var dl = new DynamicLayout();
+                    dl.BeginHorizontal();
+                    dl.Add(_assetType);
+                    dl.Add(_searchBox, true);
+                    dl.Add(clearSearchBtn);
+                    dl.Add(_searchBtn);
+                    dl.Add(_category);
+                    dl.Add(filtersToggleBtn);
+                    dl.EndHorizontal();
+                    searchRow.Content = dl;
+                }
+            }
+            LayoutSearchRow();
+            searchRow.SizeChanged += (s, e) => LayoutSearchRow();
 
             // glTF-only filter is dropped from the UI — we convert .blend
             // locally via Blender, so it's no longer needed.
@@ -693,6 +750,11 @@ namespace Blendkit.Rhino
             ApplyDarkMode(this);
             ApplyFilterVisibility();
             RebuildTabBar();
+            // Wrap the tab bar across rows when the panel is too narrow to
+            // fit them all inline. Hooked after RebuildTabBar so the first
+            // SizeChanged (which fires once Eto knows the panel's real
+            // dimensions) re-flows the just-built buttons into rows.
+            _tabBar.SizeChanged += (s, e) => LayoutTabBar();
         }
 
         /// <summary>
@@ -1780,9 +1842,16 @@ namespace Blendkit.Rhino
         // ---------- Search tabs ----------
 
         /// <summary>Build the row of tab buttons + a trailing "+" button.</summary>
+        // Cached approximate widths for each item in _tabBarButtons. Used
+        // by LayoutTabBar to decide where to break rows without forcing a
+        // measurement pass through Eto's WPF backend (which is slow and
+        // fires re-layout events recursively).
+        private readonly List<int> _tabBarButtonWidths = new List<int>();
+
         private void RebuildTabBar()
         {
-            _tabBar.Items.Clear();
+            _tabBarButtons.Clear();
+            _tabBarButtonWidths.Clear();
             // Back/Forward navigation buttons — disabled when their
             // respective stacks are empty so the icons gray out. Tight
             // 24px width since they're icon-only.
@@ -1795,7 +1864,8 @@ namespace Blendkit.Rhino
                 MinimumSize = new Eto.Drawing.Size(24, 0),
             };
             backBtn.Click += (s, e) => NavigateHistory(forward: false);
-            _tabBar.Items.Add(backBtn);
+            _tabBarButtons.Add(backBtn);
+            _tabBarButtonWidths.Add(28);
             var fwdBtn = new Button
             {
                 Text = "▶",
@@ -1804,15 +1874,18 @@ namespace Blendkit.Rhino
                 MinimumSize = new Eto.Drawing.Size(24, 0),
             };
             fwdBtn.Click += (s, e) => NavigateHistory(forward: true);
-            _tabBar.Items.Add(fwdBtn);
+            _tabBarButtons.Add(fwdBtn);
+            _tabBarButtonWidths.Add(28);
 
             for (int i = 0; i < _tabs.Count; i++)
             {
                 int idx = i; // capture
                 var t = _tabs[i];
-                var label = !string.IsNullOrEmpty(t.TitleOverride)
+                var rawLabel = !string.IsNullOrEmpty(t.TitleOverride)
                     ? t.TitleOverride
                     : (!string.IsNullOrEmpty(t.Query) ? t.Query : $"Tab {i + 1}");
+                var truncated = Truncate(rawLabel, 14);
+                var displayLabel = (idx == _activeTab ? "● " : "") + truncated;
                 // Eto.Forms.Button has no per-region click events, so we
                 // approximate browser-tab UX with two adjacent buttons:
                 // a label button that switches, and (when there's more
@@ -1821,10 +1894,14 @@ namespace Blendkit.Rhino
                 // they read as a single visual tab.
                 var labelBtn = new Button
                 {
-                    Text = (idx == _activeTab ? "● " : "") + Truncate(label, 14),
+                    Text = displayLabel,
                     ToolTip = "Click to switch tabs",
                 };
                 labelBtn.Click += (s, e) => SwitchTab(idx);
+                // Approximate width: 8px per char plus padding. Truncate(14)
+                // caps at 14 chars (+ "● " for active). Conservative — better
+                // to wrap one tab early than to overflow.
+                int labelWidth = displayLabel.Length * 8 + 24;
 
                 if (_tabs.Count > 1)
                 {
@@ -1843,16 +1920,81 @@ namespace Blendkit.Rhino
                         Spacing = 0,
                         Items = { labelBtn, closeBtn },
                     };
-                    _tabBar.Items.Add(pair);
+                    _tabBarButtons.Add(pair);
+                    _tabBarButtonWidths.Add(labelWidth + 28);
                 }
                 else
                 {
-                    _tabBar.Items.Add(labelBtn);
+                    _tabBarButtons.Add(labelBtn);
+                    _tabBarButtonWidths.Add(labelWidth);
                 }
             }
             var plus = new Button { Text = "+", ToolTip = "New tab" };
             plus.Click += (s, e) => NewTab();
-            _tabBar.Items.Add(plus);
+            _tabBarButtons.Add(plus);
+            _tabBarButtonWidths.Add(32);
+
+            LayoutTabBar();
+        }
+
+        /// <summary>
+        /// Pack <see cref="_tabBarButtons"/> into one or more horizontal
+        /// rows depending on the panel's available width. Eto's
+        /// StackLayout doesn't wrap; this is a poor man's WrapPanel.
+        /// </summary>
+        private void LayoutTabBar()
+        {
+            if (_tabBarButtons.Count == 0)
+            {
+                _tabBar.Content = null;
+                return;
+            }
+            int avail = _tabBar.Width;
+            // Before first paint Width is 0; lay everything out on a single
+            // row and let the SizeChanged callback re-flow once it knows.
+            if (avail <= 0) avail = int.MaxValue;
+
+            var rows = new List<StackLayout>();
+            var current = new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = TabBarSpacing,
+            };
+            int x = 0;
+            for (int i = 0; i < _tabBarButtons.Count; i++)
+            {
+                int w = _tabBarButtonWidths[i];
+                int add = (current.Items.Count > 0 ? TabBarSpacing : 0) + w;
+                if (current.Items.Count > 0 && x + add > avail)
+                {
+                    rows.Add(current);
+                    current = new StackLayout
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = TabBarSpacing,
+                    };
+                    x = 0;
+                    add = w;
+                }
+                current.Items.Add(_tabBarButtons[i]);
+                x += add;
+            }
+            if (current.Items.Count > 0) rows.Add(current);
+
+            if (rows.Count == 1)
+            {
+                _tabBar.Content = rows[0];
+            }
+            else
+            {
+                var outer = new StackLayout
+                {
+                    Orientation = Orientation.Vertical,
+                    Spacing = TabBarSpacing,
+                };
+                foreach (var r in rows) outer.Items.Add(r);
+                _tabBar.Content = outer;
+            }
         }
 
         /// <summary>
