@@ -422,12 +422,24 @@ namespace Blendkit.Rhino
             // filters toggle) on a second row, keeping the search box and
             // its asset-type / search action together where they're
             // most useful.
+            //
+            // CRITICAL: only rebuild when the *mode* changes, not on every
+            // SizeChanged. Each rebuild re-parents _assetType / _searchBox
+            // etc. which in Eto.Wpf detaches some routed-event bindings on
+            // the underlying ComboBox / TextBox — that broke the search
+            // pipeline so silently that picking a category wouldn't make it
+            // into the URL anymore. The mode flag uses int (-1 / 0 / 1) so
+            // the very first call at construction (width=0) is treated as
+            // a state-change (-1 → 0) and actually builds something.
             var searchRow = new Panel();
+            int searchRowMode = -1; // -1 = uninitialized, 0 = wide, 1 = compact
             void LayoutSearchRow()
             {
                 int avail = searchRow.Width;
-                bool compact = avail > 0 && avail < 360;
-                if (compact)
+                int wantMode = (avail > 0 && avail < 360) ? 1 : 0;
+                if (wantMode == searchRowMode) return;
+                searchRowMode = wantMode;
+                if (wantMode == 1)
                 {
                     var top = new StackLayout
                     {
@@ -1934,19 +1946,35 @@ namespace Blendkit.Rhino
             _tabBarButtons.Add(plus);
             _tabBarButtonWidths.Add(32);
 
-            LayoutTabBar();
+            // Buttons just got rebuilt — the cached plan signature is stale,
+            // so force a layout pass even if the row breakdown happens to
+            // come out identical to the previous one.
+            LayoutTabBar(forceRebuild: true);
         }
+
+        // Plan signature for the last LayoutTabBar pass — used to skip
+        // re-parenting the tab buttons when the wrap arrangement wouldn't
+        // change. Re-parenting in Eto.Wpf detaches some routed-event
+        // wirings on stateful children (already burned us on the search
+        // row), so we minimize it here too.
+        private string _tabBarLastPlan;
 
         /// <summary>
         /// Pack <see cref="_tabBarButtons"/> into one or more horizontal
         /// rows depending on the panel's available width. Eto's
         /// StackLayout doesn't wrap; this is a poor man's WrapPanel.
         /// </summary>
-        private void LayoutTabBar()
+        /// <param name="forceRebuild">
+        /// Skip the "same-plan" early-out and re-parent unconditionally.
+        /// Pass true from RebuildTabBar (where the button identities have
+        /// changed and the cached plan is stale by definition).
+        /// </param>
+        private void LayoutTabBar(bool forceRebuild = false)
         {
             if (_tabBarButtons.Count == 0)
             {
                 _tabBar.Content = null;
+                _tabBarLastPlan = null;
                 return;
             }
             int avail = _tabBar.Width;
@@ -1954,32 +1982,44 @@ namespace Blendkit.Rhino
             // row and let the SizeChanged callback re-flow once it knows.
             if (avail <= 0) avail = int.MaxValue;
 
-            var rows = new List<StackLayout>();
-            var current = new StackLayout
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = TabBarSpacing,
-            };
+            // Compute the row breakdown into a list of (row, item indices).
+            var plan = new List<List<int>>();
+            var rowItems = new List<int>();
             int x = 0;
             for (int i = 0; i < _tabBarButtons.Count; i++)
             {
                 int w = _tabBarButtonWidths[i];
-                int add = (current.Items.Count > 0 ? TabBarSpacing : 0) + w;
-                if (current.Items.Count > 0 && x + add > avail)
+                int add = (rowItems.Count > 0 ? TabBarSpacing : 0) + w;
+                if (rowItems.Count > 0 && x + add > avail)
                 {
-                    rows.Add(current);
-                    current = new StackLayout
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = TabBarSpacing,
-                    };
+                    plan.Add(rowItems);
+                    rowItems = new List<int>();
                     x = 0;
                     add = w;
                 }
-                current.Items.Add(_tabBarButtons[i]);
+                rowItems.Add(i);
                 x += add;
             }
-            if (current.Items.Count > 0) rows.Add(current);
+            if (rowItems.Count > 0) plan.Add(rowItems);
+
+            // Skip the rebuild if the plan hasn't changed. The plan
+            // signature is "0,1,2|3,4|5" — row breaks are pipe-separated.
+            var sig = string.Join("|",
+                plan.ConvertAll(r => string.Join(",", r)));
+            if (!forceRebuild && sig == _tabBarLastPlan) return;
+            _tabBarLastPlan = sig;
+
+            var rows = new List<StackLayout>();
+            foreach (var rowIdxs in plan)
+            {
+                var sl = new StackLayout
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = TabBarSpacing,
+                };
+                foreach (var i in rowIdxs) sl.Items.Add(_tabBarButtons[i]);
+                rows.Add(sl);
+            }
 
             if (rows.Count == 1)
             {
