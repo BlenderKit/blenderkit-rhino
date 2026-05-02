@@ -427,30 +427,73 @@ namespace Blendkit.Rhino
             _category.ToolTip = "Browse categories";
 
             // Expander content: order, license, quality slider, animated, free.
+            //
+            // Every row goes through advanced.AddRow(<Panel>) where the Panel
+            // owns its own inner DynamicLayout. Eto's DynamicLayout renders
+            // direct BeginHorizontal/Add/EndHorizontal cells on the outer
+            // layout inconsistently in Rhino 8 (only the first cell shows;
+            // dropdowns disappear). Wrapping each row in its own Panel +
+            // sub-layout sidesteps that completely — same pattern the
+            // asset-type-specific rows below already used.
             var advanced = new DynamicLayout();
             advanced.Padding = new Padding(8, 4);
             advanced.Spacing = new Size(6, 4);
-            advanced.BeginHorizontal();
-            advanced.Add(new Label { Text = "Resolution:", VerticalAlignment = VerticalAlignment.Center });
-            advanced.Add(_resolution, true);
-            advanced.EndHorizontal();
-            advanced.BeginHorizontal();
-            advanced.Add(new Label { Text = "Order:", VerticalAlignment = VerticalAlignment.Center });
-            advanced.Add(_order, true);
-            advanced.EndHorizontal();
-            advanced.BeginHorizontal();
-            advanced.Add(new Label { Text = "License:", VerticalAlignment = VerticalAlignment.Center });
-            advanced.Add(_license, true);
-            advanced.EndHorizontal();
-            advanced.BeginHorizontal();
-            advanced.Add(_qualityLabel, false);
-            advanced.Add(_quality, true);
-            advanced.EndHorizontal();
-            advanced.BeginHorizontal();
-            advanced.Add(WrapCheck(_freeOnly, "Free only"));
-            advanced.Add(WrapCheck(_animated, "Animated only"));
-            advanced.Add(WrapCheck(_bookmarksOnly, "My bookmarks"));
-            advanced.EndHorizontal();
+
+            var resRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(new Label { Text = "Resolution:", VerticalAlignment = VerticalAlignment.Center });
+                inner.Add(_resolution, true);
+                inner.EndHorizontal();
+                resRow.Content = inner;
+            }
+            advanced.AddRow(resRow);
+
+            var orderRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(new Label { Text = "Order:", VerticalAlignment = VerticalAlignment.Center });
+                inner.Add(_order, true);
+                inner.EndHorizontal();
+                orderRow.Content = inner;
+            }
+            advanced.AddRow(orderRow);
+
+            var licenseRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(new Label { Text = "License:", VerticalAlignment = VerticalAlignment.Center });
+                inner.Add(_license, true);
+                inner.EndHorizontal();
+                licenseRow.Content = inner;
+            }
+            advanced.AddRow(licenseRow);
+
+            var qualityRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(_qualityLabel, false);
+                inner.Add(_quality, true);
+                inner.EndHorizontal();
+                qualityRow.Content = inner;
+            }
+            advanced.AddRow(qualityRow);
+
+            var togglesRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(WrapCheck(_freeOnly, "Free only"));
+                inner.Add(WrapCheck(_animated, "Animated only"));
+                inner.Add(WrapCheck(_bookmarksOnly, "My bookmarks"));
+                inner.EndHorizontal();
+                togglesRow.Content = inner;
+            }
+            advanced.AddRow(togglesRow);
             // Wrap each asset-type-specific row in a Panel so we can hide
             // it for asset types where the filter doesn't apply. Mirrors
             // the Blender addon: polycount + condition are model-only,
