@@ -109,6 +109,19 @@ else
     echo "[deploy]          Or set BLENDKIT_CLIENT_DIR to the folder containing the client binary."
 fi
 
+# Bundled Blender-script recipes (tools/). The Go client resolves
+# `script_id` -> <exe_dir>/tools/<id>.py at runtime, so the recipes
+# need to ship next to the client binary in the deployed plug-in.
+# Hosts that call script_id="export_glb" (BlenderConvertService.cs)
+# depend on these being present.
+if [ -d "$CLIENT_DIR/tools" ]; then
+    mkdir -p "$TARGET/client/tools"
+    cp -R "$CLIENT_DIR/tools/." "$TARGET/client/tools/"
+    echo "[deploy] Bundled Blender-script recipes copied to client/tools/."
+else
+    echo "[deploy] NOTE: $CLIENT_DIR/tools not found; bundled script_id recipes won't be available."
+fi
+
 # Optional deploy-side artefacts (toolbar, manifest, listing icon).
 if [ -f "$RHINO_DIR/deploy/BlenderKit.rui" ]; then
     cp -f "$RHINO_DIR/deploy/BlenderKit.rui" "$TARGET/BlenderKit.rui"

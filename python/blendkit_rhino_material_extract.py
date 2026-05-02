@@ -233,10 +233,17 @@ if '--' not in argv:
     sys.exit(2)
 argv = argv[argv.index('--') + 1:]
 if not argv:
-    print('material_extract: no output path given', file=sys.stderr)
+    print('material_extract: no params.json path given', file=sys.stderr)
     sys.exit(2)
 
-out_json = argv[0]
+# /run_blender_script ABI: last argv is a JSON params file the Go
+# client wrote for us. We pull `output_path` (the .material.json
+# destination); everything else in there is currently unused but
+# reserved for future Rhino-side knobs (color space hints, override
+# UV layer, etc.).
+with open(argv[-1], 'r', encoding='utf-8') as _params_fh:
+    _params = json.load(_params_fh)
+out_json = _params['output_path']
 
 unpack_all_images_addon_style()
 

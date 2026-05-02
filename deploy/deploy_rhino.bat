@@ -12,34 +12,24 @@ REM   deploy_rhino.bat --launch   - start Rhino 8 after deploying
 setlocal EnableDelayedExpansion
 
 set RHINO_DIR=%~dp0..
-REM Locating the Go client binary.
-REM
-REM The Rhino plug-in and the Blender add-on share the same Go client
-REM source. After splitting the Rhino plug-in into its own repo, this
-REM script no longer assumes a sibling `client\` folder. Resolution
-REM order (first hit wins):
-REM   1. %BLENDKIT_CLIENT_DIR%               - explicit override (env var)
-REM   2. %RHINO_DIR%\..\client               - legacy sibling layout
-REM                                            (kept so existing dev
-REM                                            workspaces keep working)
-REM   3. %RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client
-REM                                          - default Vilem-style
-REM                                            workspace where the
-REM                                            Blender repo is checked
-REM                                            out next door
-REM   4. %RHINO_DIR%\..\blenderkit\client    - Blender addon checked out
-REM                                            inside this repo
-if defined BLENDKIT_CLIENT_DIR (
-    set CLIENT_DIR=%BLENDKIT_CLIENT_DIR%
-) else if exist "%RHINO_DIR%\..\client\client.exe" (
-    set CLIENT_DIR=%RHINO_DIR%\..\client
-) else if exist "%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client\client.exe" (
-    set CLIENT_DIR=%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client
-) else if exist "%RHINO_DIR%\..\blenderkit\client\client.exe" (
-    set CLIENT_DIR=%RHINO_DIR%\..\blenderkit\client
-) else (
-    set CLIENT_DIR=%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client
-)
+
+REM Locate the Go client binary. After splitting the Rhino plug-in
+REM into its own repo, this script no longer assumes a sibling
+REM client folder. Resolution order (first hit wins):
+REM   1. BLENDKIT_CLIENT_DIR env var        - explicit override
+REM   2. ..\client                          - legacy sibling layout
+REM   3. ..\..\source_blenderkit_addon\blenderkit\client
+REM                                         - default sibling-repo layout
+REM   4. ..\blenderkit\client               - Blender addon nested inside
+REM Plain nested IFs (no else-if chains): cmd parses parenthesised
+REM blocks once and trips on edge cases when nested deep.
+set CLIENT_DIR=
+if defined BLENDKIT_CLIENT_DIR set CLIENT_DIR=%BLENDKIT_CLIENT_DIR%
+if not defined CLIENT_DIR if exist "%RHINO_DIR%\..\client\client.exe" set CLIENT_DIR=%RHINO_DIR%\..\client
+if not defined CLIENT_DIR if exist "%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client\client.exe" set CLIENT_DIR=%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client
+if not defined CLIENT_DIR if exist "%RHINO_DIR%\..\blenderkit\client\client.exe" set CLIENT_DIR=%RHINO_DIR%\..\blenderkit\client
+if not defined CLIENT_DIR set CLIENT_DIR=%RHINO_DIR%\..\..\source_blenderkit_addon\blenderkit\client
+
 REM REPO_ROOT kept as an alias for any callers that still reference it.
 set REPO_ROOT=%RHINO_DIR%\..
 set TARGET=%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\BlenderKit
@@ -135,6 +125,20 @@ if exist "%CLIENT_DIR%\client.exe" (
     echo [deploy] WARNING: Go client not found at %CLIENT_DIR%\client.exe
     echo [deploy]          Build it with: pushd "%CLIENT_DIR%" ^&^& go build ^&^& popd
     echo [deploy]          Or set BLENDKIT_CLIENT_DIR to the folder containing client.exe.
+)
+
+REM ---- Copy bundled Blender-script recipes (tools\) ----
+REM The Go client resolves script_id at runtime by looking up
+REM exe_dir\tools\id.py, so the recipes need to live next to
+REM client.exe in the deployed plug-in. Hosts calling
+REM script_id="export_glb" (BlenderConvertService) depend on these.
+if exist "%CLIENT_DIR%\tools" (
+    if not exist "%TARGET%\client\tools" mkdir "%TARGET%\client\tools"
+    xcopy /E /Y /I /Q "%CLIENT_DIR%\tools" "%TARGET%\client\tools\" >nul
+    echo [deploy] Bundled Blender-script recipes copied to client\tools\.
+) else (
+    echo [deploy] NOTE: %CLIENT_DIR%\tools not found - bundled script_id recipes unavailable.
+    echo [deploy]       Update the Blender add-on checkout or set BLENDKIT_CLIENT_DIR.
 )
 
 REM ---- Optional: BlenderKit.rui toolbar file ----

@@ -5,11 +5,19 @@ using System.Threading.Tasks;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// POST /blend_to_glb on the local Go client. The Go side spawns Blender,
-    /// streams progress as task updates, and finishes with result.file_path
-    /// pointing at the .glb. Mirrors DownloadService — caller subscribes to
-    /// task updates via the existing /report poller and dispatches by
-    /// task_type "blend_to_glb".
+    /// POST /run_blender_script with the bundled `export_glb` recipe.
+    /// The Go client spawns Blender, streams progress as task updates,
+    /// and finishes with result.file_path pointing at the .glb.
+    ///
+    /// We tag the task type via the standard run_blender_script flow;
+    /// the calling site stores the task_id in <see cref="BlendkitPanel"/>'s
+    /// _pendingConvertActions so the panel can route "run_blender_script"
+    /// finishes to <c>HandleConvertTask</c> alongside the legacy
+    /// "blend_to_glb" task type.
+    ///
+    /// Old endpoint (/blend_to_glb) still works as a thin shim on the
+    /// server side — kept for back-compat — but new code should call
+    /// the unified endpoint with `script_id="export_glb"` directly.
     /// </summary>
     public static class BlenderConvertService
     {
@@ -18,14 +26,23 @@ namespace Blendkit.Rhino.Infra
             var glbPath = Path.ChangeExtension(blendPath, ".glb");
             var payload = new
             {
-                blend_path = blendPath,
-                glb_path = glbPath,
-                app_id = appId,
-                addon_version = SearchService.AddonVersion,
+                script_id      = "export_glb",
+                blend_path     = blendPath,
+                output_path    = glbPath,
+                status_message = "Converting…",
+                @params = new
+                {
+                    output_path  = glbPath,
+                    yup          = true,
+                    draco        = false,
+                    export_apply = true,
+                },
+                app_id           = appId,
+                addon_version    = SearchService.AddonVersion,
                 platform_version = "Rhino 8",
-                software = "Rhino",
+                software         = "Rhino",
             };
-            var body = await ClientLib.PostJsonAsync("/blend_to_glb", payload);
+            var body = await ClientLib.PostJsonAsync("/run_blender_script", payload);
             using var doc = JsonDocument.Parse(body);
             return doc.RootElement.TryGetProperty("task_id", out var tid)
                 ? tid.GetString() ?? ""

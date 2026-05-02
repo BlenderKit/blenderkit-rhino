@@ -32,17 +32,24 @@ namespace Blendkit.Rhino.Infra
                 throw new FileNotFoundException(
                     "blendkit_rhino_material_extract.py missing — re-deploy the plugin.");
 
+            // Host-specific recipe — stays in the plug-in (not bundled with
+            // the client) because it builds a Rhino-PBR-shaped JSON. We pass
+            // its absolute path via script_path; params travels as a JSON
+            // map (cleaner than the legacy positional argv).
             var payload = new
             {
-                blend_path = blendPath,
-                script_path = scriptPath,
-                args = new[] { jsonPath },
-                output_path = jsonPath,
+                script_path    = scriptPath,
+                blend_path     = blendPath,
+                output_path    = jsonPath,
                 status_message = "Extracting material…",
-                app_id = appId,
-                addon_version = SearchService.AddonVersion,
+                @params = new
+                {
+                    output_path = jsonPath,
+                },
+                app_id           = appId,
+                addon_version    = SearchService.AddonVersion,
                 platform_version = "Rhino 8",
-                software = "Rhino",
+                software         = "Rhino",
             };
             var body = await ClientLib.PostJsonAsync("/run_blender_script", payload);
             using var doc = JsonDocument.Parse(body);

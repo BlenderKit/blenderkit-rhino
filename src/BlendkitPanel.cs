@@ -3537,18 +3537,28 @@ namespace Blendkit.Rhino
             else if (type == "categories_update" && status == "finished")
                 HandleCategoriesTask(task);
             else if (type == "blend_to_glb")
-                // Always route — the Go client's cache fast-path can emit
-                // "finished" before our action is registered. HandleConvertTask
-                // buffers orphan results so ConvertForDrop can pick them up.
+                // Legacy task type — kept for back-compat with older
+                // client builds. The unified /run_blender_script flow
+                // below handles new conversions; either path lands in
+                // HandleConvertTask. Always route — the Go client's
+                // cache fast-path can emit "finished" before our action
+                // is registered. HandleConvertTask buffers orphan
+                // results so ConvertForDrop can pick them up.
                 HandleConvertTask(status, task, taskId);
             else if (type == "blend_to_material_json")
                 HandleMaterialJsonTask(status, task, taskId);
-            else if (type == "run_blender_script" && _pendingMaterialDrops.ContainsKey(taskId))
-                // The new generic /run_blender_script endpoint replaces
-                // /blend_to_material_json for the Rhino plugin. We
-                // disambiguate by tracking the task_ids we kicked off
-                // for material extraction; same handler applies.
-                HandleMaterialJsonTask(status, task, taskId);
+            else if (type == "run_blender_script")
+            {
+                // The unified /run_blender_script endpoint feeds both
+                // GLB conversion (script_id="export_glb") and Rhino's
+                // host-specific material extraction (script_path=…).
+                // We disambiguate purely by which queue holds the
+                // task_id — no enum on the task payload needed.
+                if (_pendingConvertActions.ContainsKey(taskId))
+                    HandleConvertTask(status, task, taskId);
+                else if (_pendingMaterialDrops.ContainsKey(taskId))
+                    HandleMaterialJsonTask(status, task, taskId);
+            }
             else if (type == "ratings/get_bookmarks" && status == "finished")
                 HandleBookmarksTask(task);
             else if (type == "profiles/get_user_profile")
