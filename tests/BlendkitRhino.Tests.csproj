@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Tests target plain net7.0 (no -windows TFM): they only exercise
+      framework-agnostic logic (SearchService.BuildUrlQuery, CategoriesService,
+      AuthService PKCE), no RhinoCommon / Eto / Win32 needed. Keeps `dotnet
+      test` fast and runnable from CI.
+    -->
+    <!-- Use net8.0 (installed runtime); plugin still ships as net7.0-windows. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+    <RootNamespace>Blendkit.Rhino.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.6.6" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.6" />
+  </ItemGroup>
+
+  <!--
+    Pull in just the source files we want to exercise. We avoid referencing
+    the main BlendkitRhino.csproj because that drags in RhinoCommon /
+    Eto / System.Drawing.Common (Windows-only) and System.Windows.Input,
+    none of which the tested code touches.
+  -->
+  <ItemGroup>
+    <Compile Include="..\src\Infra\SearchService.cs" />
+    <Compile Include="..\src\Infra\CategoriesService.cs" />
+    <Compile Include="..\src\Infra\AuthService.cs" />
+    <!-- ClientLib is referenced by SearchService — stub out the network calls
+         in tests via a thin shim if needed. For now SearchService is mostly
+         pure functions, so we can test BuildUrlQuery without ClientLib. -->
+    <Compile Include="..\src\Infra\ClientLib.cs" />
+  </ItemGroup>
+</Project>

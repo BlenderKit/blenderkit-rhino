@@ -1,0 +1,32 @@
+---
+# macOS variant of the Yak manifest. Identical to manifest.yml except:
+#   * the os: mac directive flags the package as macOS-only so Windows
+#     users don't accidentally install a darwin-binary client;
+#   * the version stays in lockstep with the Windows package.
+#
+# Yak builds one .yak per OS — `yak build` in a dir containing this
+# file produces blenderkit-<version>-rh8_30-mac.yak.
+name: BlenderKit
+version: 0.1.0
+authors:
+  - BlenderKit
+description: >
+  BlenderKit asset browser for Rhino 8 (macOS) — drag-drop access to
+  thousands of free and paid 3D models, materials, and HDR
+  environments. Mirrors the Blender BlenderKit add-on: per-asset-type
+  filters, login, bookmarks, ratings, and an in-Rhino preview before
+  download.
+url: https://www.blenderkit.com
+keywords:
+  - blenderkit
+  - assets
+  - materials
+  - hdr
+  - models
+  - library
+  - textures
+  - asset-browser
+icon: icon.png
+# macOS-only — the Go client binary shipped in this package is a Mach-O
+# executable. The Windows variant (manifest.yml) ships the .exe.
+os: mac

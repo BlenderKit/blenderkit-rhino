@@ -1,0 +1,32 @@
+# Build artifacts
+**/bin/
+**/obj/
+**/build/
+
+# Local user files
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Test runner cache
+.test-results/
+
+# Yak packages produced by --pack (kept under build/Release/packages/)
+*.yak
+
+# Stamp file written by the plug-in once on first run; not source.
+*.rui.loaded
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Stray editor backups
+*~
+*.bak

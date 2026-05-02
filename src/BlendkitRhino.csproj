@@ -1,0 +1,111 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!--
+      Rhino 8 runs on .NET 7 on both Windows and macOS. We multi-target
+      so the same source produces a Windows-flavoured .rhp (net7.0-windows
+      for System.Drawing.Icon + Win32 hooks) and a macOS-flavoured one
+      (plain net7.0, no Windows-only types). Build both with
+      `dotnet build -c Release` — the artefacts land in
+      bin/Release/net7.0-windows/ and bin/Release/net7.0/.
+    -->
+    <TargetFrameworks>net7.0-windows;net7.0</TargetFrameworks>
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <RootNamespace>Blendkit.Rhino</RootNamespace>
+    <!--
+      Internal assembly / .rhp filename. Renamed from BlenderKitRhino
+      to Blendkit-* (the project's internal identifier rename); the
+      user-visible plug-in name stays "BlenderKit" via the explicit
+      <AssemblyTitle>/<Product> overrides below so the entry in
+      Rhino > Options > Plug-ins doesn't suddenly say "BlendkitRhino".
+    -->
+    <AssemblyName>BlendkitRhino</AssemblyName>
+    <!-- Rhino loads plugins from .rhp files; rename the .dll output here. -->
+    <TargetExt>.rhp</TargetExt>
+    <NoWarn>NU1701;CS8032;CA1416</NoWarn>
+    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Nullable>disable</Nullable>
+    <!--
+      Plugin metadata visible in Rhino > Options > Plug-ins. These
+      override MSBuild's defaults (which would otherwise derive
+      AssemblyTitle/Product from AssemblyName, leaking the internal
+      "BlendkitRhino" name into the UI).
+    -->
+    <Title>BlenderKit</Title>
+    <AssemblyTitle>BlenderKit</AssemblyTitle>
+    <Product>BlenderKit</Product>
+    <Description>BlenderKit asset browser — Rhino 8 port.</Description>
+    <Version>0.1.0</Version>
+    <Authors>BlenderKit</Authors>
+    <Company>BlenderKit</Company>
+    <!--
+      Define WINDOWS_BUILD only on the Windows target so we can guard
+      Win32 P/Invokes (mouse-wheel hook, GetCursorPos) at compile time.
+      On the net7.0 (macOS-compatible) target, those code paths are
+      stubbed to no-ops.
+    -->
+    <DefineConstants Condition="'$(TargetFramework)' == 'net7.0-windows'">$(DefineConstants);WINDOWS_BUILD</DefineConstants>
+  </PropertyGroup>
+
+  <!--
+    Reference Rhino DLLs directly from the install. This is more reliable than
+    NuGet for local dev because the DLLs already match the running Rhino
+    exactly. For CI / reproducible builds, switch to the RhinoCommon NuGet
+    package later.
+  -->
+  <!--
+    System.Drawing.Common is needed because Panels.RegisterPanel takes a
+    System.Drawing.Icon argument. Ship-wise we pass null, but the reference
+    still has to resolve at compile time.
+  -->
+  <!-- BlenderKit logo embedded as a manifest resource so the .rhp can load
+       it via Assembly.GetManifestResourceStream and pass an Icon to
+       Panels.RegisterPanel. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\blenderkit_logo.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="7.0.0" />
+  </ItemGroup>
+
+  <!--
+    Rhino DLL references. On Windows we point at the install location.
+    On other platforms we use the user's RHINO_DIR env var (or the
+    RhinoCommon NuGet — TODO once we set up CI).
+  -->
+  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
+    <Reference Include="RhinoCommon">
+      <HintPath>$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rhino.UI">
+      <HintPath>$(ProgramFiles)\Rhino 8\System\Rhino.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Eto">
+      <HintPath>$(ProgramFiles)\Rhino 8\System\Eto.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
+    <!--
+      macOS Rhino install path. Set RHINO_DIR if your Rhino isn't at
+      the default /Applications/Rhinoceros 8.app.
+    -->
+    <Reference Include="RhinoCommon">
+      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rhino.UI">
+      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/Rhino.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Eto">
+      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/Eto.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
