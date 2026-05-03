@@ -75,6 +75,24 @@ namespace Blendkit.Rhino.Infra
             return list;
         }
 
+        public static bool GetBool(string key, bool fallback = false)
+        {
+            var d = Load();
+            if (!d.TryGetValue(key, out var v)) return fallback;
+            if (v.ValueKind == JsonValueKind.True) return true;
+            if (v.ValueKind == JsonValueKind.False) return false;
+            // Tolerate stringly-typed legacy values ("true" / "false").
+            if (v.ValueKind == JsonValueKind.String
+                && bool.TryParse(v.GetString(), out var b)) return b;
+            return fallback;
+        }
+
+        public static void SetBool(string key, bool value)
+        {
+            using var doc = JsonDocument.Parse(value ? "true" : "false");
+            SetRaw(key, doc.RootElement.Clone());
+        }
+
         public static void SetString(string key, string value) => SetRaw(key, JsonValue(value));
         public static void SetStringList(string key, IEnumerable<string> values)
         {

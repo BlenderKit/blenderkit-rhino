@@ -72,11 +72,49 @@ namespace Blendkit.Rhino
         // Opt-in toggle for the design-year range — hides the "0 to 0"
         // default and only seeds 1900..now once the user activates it.
         private readonly CheckBox _designYearEnable = new CheckBox { Text = "Design year", Checked = false };
+
+        // ---- Import options (live below the Resolution row) ----
+        // Strip materials: clear material assignments on every imported
+        // object right after the .glb import completes. Heavy textures are
+        // a major Rhino-viewport performance hit, so this gives users a
+        // one-click "give me geometry only" mode. When active we also
+        // grey out the Resolution dropdown and force the lowest variant
+        // when downloading — no point pulling 4K textures we'll discard.
+        private readonly CheckBox _stripMaterials = new CheckBox { Checked = false };
+        // Decimate polygons: only meaningful (and visible) when Strip
+        // Materials is on, since reducing polycount with textures
+        // attached destroys the UVs. Caps every imported mesh at ~1000
+        // faces. Massive viewport win on high-poly assets.
+        private readonly CheckBox _decimatePolygons = new CheckBox { Checked = false };
+        private const int DecimateTargetFaceCount = 1000;
         // Cascading category picker: a button that opens a ContextMenu built
         // dynamically from CategoriesService.TreeForAssetType. Closer to the
         // Blender addon's nested category enum than a single flat dropdown.
         private readonly Button _category = new Button { Text = "All categories ▾" };
-        private string _categorySlug = "";
+
+        // Storage for the category slug. We don't expose the field
+        // directly; reads/writes go through the property below so every
+        // mutation gets logged with its caller — this has been a
+        // recurring "stuck/missing" bug source and the call site of the
+        // mutation is what we always need to diagnose it.
+        private string _categorySlugBacking = "";
+        private string _categorySlug
+        {
+            get => _categorySlugBacking;
+            set
+            {
+                if (_categorySlugBacking == value) return;
+                string caller;
+                try
+                {
+                    var f = new System.Diagnostics.StackFrame(1, false).GetMethod();
+                    caller = f != null ? (f.DeclaringType?.Name + "." + f.Name) : "?";
+                }
+                catch { caller = "?"; }
+                BkLog.W($"_categorySlug: '{_categorySlugBacking}' → '{value}' [{caller}]");
+                _categorySlugBacking = value;
+            }
+        }
         private readonly Label _status = new Label { Text = "Ready." };
         // Horizontal bar of "filter chips" (e.g. [✕ Free] [✕ Quality 5+]
         // [✕ author: Vilém Duha]). Click ✕ to clear that one filter and
@@ -518,6 +556,54 @@ namespace Blendkit.Rhino
                 resRow.Content = inner;
             }
             advanced.AddRow(resRow);
+
+            // Import-options rows live directly below the resolution row.
+            // Strip materials always shows; "Decimate" only appears when
+            // strip is on (the comment on _decimatePolygons explains why).
+            var stripRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(WrapCheck(_stripMaterials, "Strip materials (drop textures, force lowest resolution)"));
+                inner.EndHorizontal();
+                stripRow.Content = inner;
+            }
+            advanced.AddRow(stripRow);
+
+            var decimateRow = new Panel { Visible = false };
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(WrapCheck(_decimatePolygons, $"Decimate polygons (cap at {DecimateTargetFaceCount}/object)"));
+                inner.EndHorizontal();
+                decimateRow.Content = inner;
+            }
+            advanced.AddRow(decimateRow);
+
+            // Wire up the strip-materials side effects:
+            //   1. Toggle visibility of the decimate row.
+            //   2. Grey out the resolution dropdown (we override to lowest
+            //      anyway during download, so leaving it active would be
+            //      misleading).
+            //   3. Persist both flags so the choice survives panel reopens.
+            _stripMaterials.CheckedChanged += (s, e) =>
+            {
+                bool on = _stripMaterials.Checked == true;
+                decimateRow.Visible = on;
+                _resolution.Enabled = !on;
+                Settings.SetBool("strip_materials", on);
+                if (!on) _decimatePolygons.Checked = false;
+            };
+            _decimatePolygons.CheckedChanged += (s, e) =>
+                Settings.SetBool("decimate_polygons", _decimatePolygons.Checked == true);
+            // Restore from settings.
+            _stripMaterials.Checked = Settings.GetBool("strip_materials");
+            _decimatePolygons.Checked = Settings.GetBool("decimate_polygons");
+            // Apply the side effects once on construction so the UI matches
+            // the restored state (CheckedChanged doesn't fire from the
+            // .Checked = ... assignment above on every Eto backend).
+            decimateRow.Visible = _stripMaterials.Checked == true;
+            _resolution.Enabled = !(_stripMaterials.Checked == true);
 
             var orderRow = new Panel();
             {
@@ -3075,11 +3161,99 @@ namespace Blendkit.Rhino
         /// HandleDownloadTask can route progress + completion to the right
         /// preview cube.
         /// </summary>
+        /// <summary>
+        /// Resolve the download resolution string the Go client expects
+        /// (e.g. <c>"resolution_2K"</c>). When Strip Materials is on we
+        /// always pick the lowest available size (<c>resolution_0_5K</c>)
+        /// — saves bandwidth + cache space on assets we'll discard the
+        /// textures from anyway. The dropdown is greyed out in that mode
+        /// so the override matches what the user sees.
+        /// </summary>
+        private string ResolveDownloadResolution()
+        {
+            if (_stripMaterials.Checked == true) return "resolution_0_5K";
+            // Translate UI label like "2K" → "resolution_2K" the Go client wants.
+            // "0.5K" maps to "resolution_0_5K".
+            var sel = _resolution.SelectedValue?.ToString() ?? "2K";
+            return "resolution_" + sel.Replace("0.5K", "0_5K");
+        }
+
+        /// <summary>
+        /// Strip materials and/or decimate meshes on a freshly-imported
+        /// set of objects. Called BEFORE the blockify step so the
+        /// modifications stick to the geometry that becomes block
+        /// content — modifying the InstanceDefinition members after
+        /// blockify works too but is uglier and re-renders twice.
+        /// </summary>
+        private void ApplyImportPostProcess(global::Rhino.RhinoDoc doc, IList<Guid> ids)
+        {
+            bool strip = _stripMaterials.Checked == true;
+            bool decimate = strip && _decimatePolygons.Checked == true;
+            if (!strip && !decimate) return;
+            int materialsCleared = 0, meshesReduced = 0;
+            foreach (var id in ids)
+            {
+                var obj = doc.Objects.FindId(id);
+                if (obj == null) continue;
+                if (strip) ClearObjectMaterial(doc, obj, ref materialsCleared);
+                if (decimate) DecimateObject(doc, obj, ref meshesReduced);
+            }
+            if (materialsCleared > 0 || meshesReduced > 0)
+            {
+                BkLog.W($"PostImport: stripped {materialsCleared} materials, decimated {meshesReduced} meshes (target {DecimateTargetFaceCount} faces)");
+            }
+        }
+
+        private static void ClearObjectMaterial(global::Rhino.RhinoDoc doc,
+            global::Rhino.DocObjects.RhinoObject obj, ref int counter)
+        {
+            try
+            {
+                // Drop the object-side material assignment so it falls
+                // back to the layer/default. We DON'T delete materials
+                // from doc.Materials — other (untouched) imports may be
+                // using them. They'll get garbage-collected on save.
+                var attrs = obj.Attributes.Duplicate();
+                attrs.MaterialSource = global::Rhino.DocObjects.ObjectMaterialSource.MaterialFromLayer;
+                attrs.MaterialIndex = -1;
+                if (doc.Objects.ModifyAttributes(obj, attrs, quiet: true)) counter++;
+                // Also clear the RenderMaterial for the Cycles/render
+                // pipeline (the Render plug-in resolves materials via
+                // RenderMaterial *separately* from MaterialIndex —
+                // AssignMaterialToObject elsewhere in this file documents
+                // the same dual-track gotcha).
+                try { obj.RenderMaterial = null; obj.CommitChanges(); } catch { }
+            }
+            catch (Exception ex) { BkLog.W("ClearObjectMaterial: " + ex.Message); }
+        }
+
+        private static void DecimateObject(global::Rhino.RhinoDoc doc,
+            global::Rhino.DocObjects.RhinoObject obj, ref int counter)
+        {
+            try
+            {
+                if (obj.Geometry is global::Rhino.Geometry.Mesh mesh
+                    && mesh.Faces.Count > DecimateTargetFaceCount)
+                {
+                    var dup = mesh.DuplicateMesh();
+                    // Reduce(desiredPolygonCount, allowDistortion, accuracy, normalizeSize)
+                    // - allowDistortion=false: keep boundaries respected.
+                    // - accuracy=10: max accuracy (slowest, best output).
+                    // - normalizeSize=false: operate on the mesh as-is.
+                    if (dup.Reduce(DecimateTargetFaceCount, false, 10, false))
+                    {
+                        if (doc.Objects.Replace(obj.Id, dup)) counter++;
+                    }
+                }
+            }
+            catch (Exception ex) { BkLog.W("DecimateObject: " + ex.Message); }
+        }
+
         private async Task StartDownloadForDrop(JsonElement hit, ActiveDrop drop)
         {
             var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "(asset)";
-            var sel = _resolution.SelectedValue?.ToString() ?? "2K";
-            var resolution = "resolution_" + sel.Replace("0.5K", "0_5K");
+            var resolution = ResolveDownloadResolution();
+            var sel = resolution.Replace("resolution_", "").Replace("0_5K", "0.5K");
             SetStatus($"Starting download: {name} @ {sel}…");
             try
             {
@@ -3266,6 +3440,12 @@ namespace Blendkit.Rhino
             if (_grid_static_currentHit.HasValue
                 && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
                 assetName = nv.GetString();
+
+            // Strip materials / decimate before blockify, so the
+            // simplifications stick to the geometry that becomes
+            // InstanceDefinition content (re-instancing later picks them
+            // up automatically). No-op when both flags are off.
+            ApplyImportPostProcess(doc, newIds);
 
             // Wrap the imported geometry into an InstanceDefinition
             // keyed by asset_base_id, then drop a single InstanceObject
@@ -3610,6 +3790,10 @@ namespace Blendkit.Rhino
                         }
                     }
 
+                    // Strip materials / decimate before the geometry gets
+                    // moved into place. Same hook point as ImportAtPointCore.
+                    ApplyImportPostProcess(doc, added);
+
                     var gp = new global::Rhino.Input.Custom.GetPoint();
                     gp.SetCommandPrompt("Place imported asset (Esc to leave at origin)");
                     var res = gp.Get();
@@ -3764,10 +3948,8 @@ namespace Blendkit.Rhino
         private async Task StartDownloadFor(JsonElement hit)
         {
             var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "(asset)";
-            // Translate UI label like "2K" → "resolution_2K" the Go client wants.
-            // "0.5K" maps to "resolution_0_5K".
-            var sel = _resolution.SelectedValue?.ToString() ?? "2K";
-            var resolution = "resolution_" + sel.Replace("0.5K", "0_5K");
+            var resolution = ResolveDownloadResolution();
+            var sel = resolution.Replace("resolution_", "").Replace("0_5K", "0.5K");
             // Capture hit context for the import-side blockify pipeline.
             // ImportFile / ImportAtPickedPoint read these to look up the
             // InstDef cache and to stamp metadata on the new objects.
@@ -4256,6 +4438,8 @@ namespace Blendkit.Rhino
                             newIds.Add(o.Id);
                             SuppressWireframe(o);
                         }
+                        // Strip materials / decimate before blockify.
+                        ApplyImportPostProcess(doc, newIds);
                         // Blockify so the next click-import of the same
                         // asset hits the fast path above.
                         string assetName = null;
