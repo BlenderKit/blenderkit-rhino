@@ -195,12 +195,27 @@ namespace Blendkit.Rhino.Infra
         private struct POINT { public int X, Y; }
 
         /// <summary>
-        /// Cursor position in screen pixels — same coordinate space Rhino's
-        /// RhinoView.ScreenRectangle uses. On Windows we call GetCursorPos
-        /// directly because Eto's Mouse.Position returns DIPs (half-position
-        /// at 200% DPI). On macOS / Linux we fall back to Mouse.Position
-        /// scaled by the screen's logical-pixel factor — same effect, no
-        /// Win32 dependency required for the build to load.
+        /// Cursor position in the same coordinate space Rhino's
+        /// <see cref="RhinoView.ScreenRectangle"/> uses, so we can hit-test
+        /// "is the cursor over a viewport?" without inventing our own
+        /// projection.
+        ///
+        /// Per-platform:
+        ///   - Windows: <c>GetCursorPos</c> returns raw physical pixels —
+        ///     same space ScreenRectangle uses. Eto's Mouse.Position is
+        ///     in DIPs (half-position at 200% DPI) so we can't just trust
+        ///     that on Win.
+        ///   - macOS: Eto.Mac and Rhino's screen rect are both in Cocoa
+        ///     points (logical units). DO NOT scale by LogicalPixelSize —
+        ///     that double-counts DPI and pushes the cursor off-screen on
+        ///     Retina displays. The visible bug: drops cancel with
+        ///     "released outside any viewport" even though the cursor is
+        ///     clearly on the viewport (rhino_panel.log lines 1-3 of any
+        ///     drag attempt on a 200% Mac).
+        ///   - Linux: empirically the same logical-vs-physical mismatch
+        ///     as Windows shows up under WPF, so we keep the
+        ///     LogicalPixelSize multiplier as a best guess. Adjust if a
+        ///     Linux user reports the same off-by-DPI symptom Mac had.
         /// </summary>
         private static (int x, int y) GetCursorPhysical()
         {
@@ -209,6 +224,10 @@ namespace Blendkit.Rhino.Infra
                 if (GetCursorPos(out var p)) return (p.X, p.Y);
             }
             var pos = Mouse.Position;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return ((int)pos.X, (int)pos.Y);
+            }
             var screen = Eto.Forms.Screen.FromPoint(pos) ?? Eto.Forms.Screen.PrimaryScreen;
             var scale = (float)(screen?.LogicalPixelSize ?? 1.0);
             return ((int)(pos.X * scale), (int)(pos.Y * scale));
@@ -231,6 +250,28 @@ namespace Blendkit.Rhino.Infra
             var r = view.ScreenRectangle;
             int lx = sx - r.Left;
             int ly = sy - r.Top;
+            // macOS unit-mismatch: ScreenRectangle and Mouse.Position are
+            // in Cocoa points (logical), but GetFrustumLine expects
+            // physical pixels — same convention as on Windows. On a
+            // Retina display that's a 2× difference, so without this
+            // scale the ray hits a point at half the cursor's actual
+            // distance from the viewport origin and the drop lands at
+            // ~half-cursor (visible bug in quad-view: preview appears
+            // in the right viewport but at half the cursor offset).
+            // We only scale the local coords passed to GetFrustumLine
+            // here — leaving the screen-space (sx, sy) alone so the
+            // ViewAt rect-test elsewhere keeps working in points.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                var screen = Eto.Forms.Screen.FromPoint(new Eto.Drawing.PointF(sx, sy))
+                          ?? Eto.Forms.Screen.PrimaryScreen;
+                var scale = (float)(screen?.LogicalPixelSize ?? 1.0);
+                if (scale > 0 && Math.Abs(scale - 1.0) > 0.01)
+                {
+                    lx = (int)(lx * scale);
+                    ly = (int)(ly * scale);
+                }
+            }
             var vp = view.ActiveViewport;
             if (!vp.GetFrustumLine(lx, ly, out Line ray))
                 return (Point3d.Origin, Vector3d.ZAxis, Guid.Empty);
