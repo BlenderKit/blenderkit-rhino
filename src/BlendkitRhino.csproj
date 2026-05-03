@@ -90,21 +90,35 @@
     </Reference>
   </ItemGroup>
 
+  <!--
+    macOS Rhino install path. Rhino 8 ships its managed assemblies in
+    Contents/Frameworks/RhCore.framework/Versions/A/Resources/. Older
+    Rhino 7 (and the legacy "Rhinoceros 8.app" bundle name from earlier
+    installers) used Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/.
+    We probe both layouts and both bundle names; first hit wins. Set
+    the RHINO_DLL_DIR property explicitly to override — useful in CI or
+    when Rhino is installed somewhere non-default.
+  -->
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT' and '$(RHINO_DLL_DIR)' == ''">
+    <_RhinoCand1>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources</_RhinoCand1>
+    <_RhinoCand2>/Applications/Rhinoceros 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources</_RhinoCand2>
+    <_RhinoCand3>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp</_RhinoCand3>
+    <RHINO_DLL_DIR Condition="Exists('$(_RhinoCand1)/RhinoCommon.dll')">$(_RhinoCand1)</RHINO_DLL_DIR>
+    <RHINO_DLL_DIR Condition="'$(RHINO_DLL_DIR)' == '' and Exists('$(_RhinoCand2)/RhinoCommon.dll')">$(_RhinoCand2)</RHINO_DLL_DIR>
+    <RHINO_DLL_DIR Condition="'$(RHINO_DLL_DIR)' == '' and Exists('$(_RhinoCand3)/RhinoCommon.dll')">$(_RhinoCand3)</RHINO_DLL_DIR>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
-    <!--
-      macOS Rhino install path. Set RHINO_DIR if your Rhino isn't at
-      the default /Applications/Rhinoceros 8.app.
-    -->
     <Reference Include="RhinoCommon">
-      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/RhinoCommon.dll</HintPath>
+      <HintPath>$(RHINO_DLL_DIR)/RhinoCommon.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Rhino.UI">
-      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/Rhino.UI.dll</HintPath>
+      <HintPath>$(RHINO_DLL_DIR)/Rhino.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Eto">
-      <HintPath>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/Eto.dll</HintPath>
+      <HintPath>$(RHINO_DLL_DIR)/Eto.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
