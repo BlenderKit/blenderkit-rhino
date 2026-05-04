@@ -402,6 +402,9 @@ namespace Blendkit.Rhino
                 BkLog.W($"_assetType.SelectedIndexChanged: → {newType} (idx={_assetType.SelectedIndex})");
                 RefreshCategoryDropdown();
                 ApplyFilterVisibility();
+                // Resolution dropdown's grey-out depends on asset type +
+                // strip-materials state. Update both flip points.
+                UpdateResolutionEnabled();
                 // Keep the chip bar in sync with the per-asset-type
                 // filter gating: a polycount chip lingering from a
                 // previous MODEL search would suggest the URL was
@@ -593,15 +596,20 @@ namespace Blendkit.Rhino
 
             // Wire up the strip-materials side effects:
             //   1. Toggle visibility of the decimate row.
-            //   2. Grey out the resolution dropdown (we override to lowest
-            //      anyway during download, so leaving it active would be
-            //      misleading).
+            //   2. Grey out the resolution dropdown — but only when the
+            //      strip-materials override actually applies. The
+            //      override only kicks in for model / printable
+            //      (ResolveDownloadResolution honors the user's choice
+            //      for HDR / material since "stripping materials" is
+            //      a no-op concept for those types). UpdateResolutionEnabled
+            //      keeps the grey-out in lockstep with both the strip
+            //      flag and the active asset type.
             //   3. Persist both flags so the choice survives panel reopens.
             _stripMaterials.CheckedChanged += (s, e) =>
             {
                 bool on = _stripMaterials.Checked == true;
                 decimateRow.Visible = on;
-                _resolution.Enabled = !on;
+                UpdateResolutionEnabled();
                 Settings.SetBool("strip_materials", on);
                 if (!on) _decimatePolygons.Checked = false;
             };
@@ -614,7 +622,7 @@ namespace Blendkit.Rhino
             // the restored state (CheckedChanged doesn't fire from the
             // .Checked = ... assignment above on every Eto backend).
             decimateRow.Visible = _stripMaterials.Checked == true;
-            _resolution.Enabled = !(_stripMaterials.Checked == true);
+            UpdateResolutionEnabled();
 
             var orderRow = new Panel();
             {
@@ -3425,6 +3433,21 @@ namespace Blendkit.Rhino
             // "0.5K" maps to "resolution_0_5K".
             var sel = _resolution.SelectedValue?.ToString() ?? "2K";
             return "resolution_" + sel.Replace("0.5K", "0_5K");
+        }
+
+        /// <summary>
+        /// Sync the Resolution dropdown's enabled state with whether the
+        /// Strip-Materials override would actually fire. Called from
+        /// _stripMaterials.CheckedChanged and _assetType.SelectedIndexChanged
+        /// so flipping either keeps the UI honest. Match the gate in
+        /// <see cref="ResolveDownloadResolution"/>.
+        /// </summary>
+        private void UpdateResolutionEnabled()
+        {
+            var at = CurrentAssetType().ToLowerInvariant();
+            bool stripApplies = at == "model" || at == "printable";
+            bool overrideActive = stripApplies && _stripMaterials.Checked == true;
+            _resolution.Enabled = !overrideActive;
         }
 
         /// <summary>
