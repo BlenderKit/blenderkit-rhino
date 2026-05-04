@@ -5,8 +5,10 @@ REM Copies the plugin into Rhino's Plug-ins folder so you can iterate.
 REM Rhino does NOT reload plugins cleanly — restart Rhino after each deploy.
 REM
 REM Usage:
-REM   deploy_rhino.bat            - build (if dotnet SDK available) + copy
+REM   deploy_rhino.bat            - build + copy + pack a redistributable .yak
 REM   deploy_rhino.bat --nobuild  - skip the C# build (Python-only changes)
+REM   deploy_rhino.bat --nopack   - skip the .yak pack (fast local iteration)
+REM   deploy_rhino.bat --nokill   - don't kill Rhino before copying files
 REM   deploy_rhino.bat --launch   - start Rhino 8 after deploying
 
 setlocal EnableDelayedExpansion
@@ -37,7 +39,9 @@ set RHINO_EXE=C:\Program Files\Rhino 8\System\Rhino.exe
 set YAK_EXE=C:\Program Files\Rhino 8\System\Yak.exe
 set DO_BUILD=1
 set DO_LAUNCH=0
-set DO_PACK=0
+REM .yak now packs by default — tester / publish cycle wants it
+REM produced every run. Pass --nopack for fast local iteration.
+set DO_PACK=1
 
 set DO_KILL_RHINO=1
 :parse_args
@@ -46,6 +50,7 @@ if /I "%~1"=="--nobuild"  set DO_BUILD=0
 if /I "%~1"=="--launch"   set DO_LAUNCH=1
 if /I "%~1"=="--nokill"   set DO_KILL_RHINO=0
 if /I "%~1"=="--pack"     set DO_PACK=1
+if /I "%~1"=="--nopack"   set DO_PACK=0
 shift
 goto parse_args
 :args_done

@@ -5,24 +5,27 @@
 # plug-ins directory → optionally pack a .yak / relaunch.
 #
 # Usage:
-#   ./deploy_rhino.sh            # build + copy + launch Rhino
+#   ./deploy_rhino.sh            # build + copy + pack .yak + launch Rhino
 #   ./deploy_rhino.sh --nobuild  # skip dotnet build
 #   ./deploy_rhino.sh --nokill   # don't kill Rhinoceros first
 #   ./deploy_rhino.sh --nolaunch # don't open Rhino after deploy
-#   ./deploy_rhino.sh --pack     # also build a redistributable .yak
+#   ./deploy_rhino.sh --nopack   # skip the .yak pack (fast local iteration)
 
 set -euo pipefail
 
 DO_BUILD=1
 DO_KILL=1
 DO_LAUNCH=1
-DO_PACK=0
+# .yak now packs by default — tester / publish cycle wants it produced
+# every run. Pass --nopack for fast local iteration.
+DO_PACK=1
 for arg in "$@"; do
     case "$arg" in
         --nobuild)  DO_BUILD=0 ;;
         --nokill)   DO_KILL=0 ;;
         --nolaunch) DO_LAUNCH=0 ;;
         --pack)     DO_PACK=1 ;;
+        --nopack)   DO_PACK=0 ;;
     esac
 done
 
