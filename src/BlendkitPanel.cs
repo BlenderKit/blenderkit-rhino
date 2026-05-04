@@ -3062,6 +3062,18 @@ namespace Blendkit.Rhino
             // download or drag preview.
             if (BlockedByPlan(hit)) return;
             var assetType = hit.TryGetProperty("assetType", out var at) ? at.GetString() : "model";
+            // HDR drag: identical to click — show resolution picker, kick
+            // off download, environment binds on completion. No drag
+            // preview, no point-targeting (HDR is per-doc, not per-point).
+            // The user explicitly asked for "drag drop should be supported
+            // also on HDRs, even if it does the same as double click".
+            if (string.Equals(assetType, "hdr", StringComparison.OrdinalIgnoreCase))
+            {
+                var picked = ShowHdrResolutionPicker(hit);
+                if (string.IsNullOrEmpty(picked)) return;
+                _ = StartDownloadFor(hit, overrideResolution: picked);
+                return;
+            }
             // Match any of the asset's id-like fields against the cache folder
             // name. BlenderKit uses both `id` (numeric string in some places,
             // UUID in others) and `assetBaseId` (the canonical UUID) — and
@@ -3111,10 +3123,10 @@ namespace Blendkit.Rhino
             // point. Drag starts immediately, status reflects ready.
             string baseId = "";
             if (hit.TryGetProperty("assetBaseId", out var b)) baseId = b.GetString() ?? "";
-            int cachedInstDef = LookupCachedInstDef(global::Rhino.RhinoDoc.ActiveDoc, baseId);
+            int cachedInstDef = LookupCachedInstDef(global::Rhino.RhinoDoc.ActiveDoc, CacheKeyForBaseId(baseId));
             if (cachedInstDef >= 0)
             {
-                BkLog.W($"OnDragStart: cached InstDef #{cachedInstDef} for {baseId} — skipping download + import");
+                BkLog.W($"OnDragStart: cached InstDef #{cachedInstDef} for {CacheKeyForBaseId(baseId)} — skipping download + import");
                 StartDrag(glbPath: null, alreadyDownloaded: true,
                     cachedInstanceDef: cachedInstDef);
                 return;
@@ -3451,6 +3463,34 @@ namespace Blendkit.Rhino
         }
 
         /// <summary>
+        /// Short tag for the current post-process state. Becomes part of
+        /// the InstanceDefinition cache key + name so a stripped import
+        /// doesn't masquerade as a non-stripped one when the user
+        /// toggles the option mid-session. "" = full-fat, "lite" =
+        /// materials stripped, "lite_dec" = stripped + decimated.
+        /// </summary>
+        private string CurrentImportVariant()
+        {
+            bool strip = _stripMaterials.Checked == true;
+            bool dec = strip && _decimatePolygons.Checked == true;
+            if (dec) return "lite_dec";
+            if (strip) return "lite";
+            return "";
+        }
+
+        /// <summary>Compose the InstDef cache key + name suffix for the active variant.</summary>
+        private string CacheKeyForBaseId(string assetBaseId)
+        {
+            var v = CurrentImportVariant();
+            return string.IsNullOrEmpty(v) ? assetBaseId : assetBaseId + "#" + v;
+        }
+        private string NameSuffixForVariant()
+        {
+            var v = CurrentImportVariant();
+            return string.IsNullOrEmpty(v) ? "" : "_" + v;
+        }
+
+        /// <summary>
         /// Strip materials and/or decimate meshes on a freshly-imported
         /// set of objects. Called BEFORE the blockify step so the
         /// modifications stick to the geometry that becomes block
@@ -3519,6 +3559,122 @@ namespace Blendkit.Rhino
                 }
             }
             catch (Exception ex) { BkLog.W("DecimateObject: " + ex.Message); }
+        }
+
+        /// <summary>
+        /// Modal "pick the HDR resolution" picker, mirroring the Blender
+        /// add-on's per-asset popup (asset_drag_op.py: invoke_resolution=True).
+        /// HDRs can be huge — 8K HDR is ~30 MB on disk and a render-killer
+        /// on import — so the user wants to pick on every drop, not lean
+        /// on a global preset. Returns the wire-format resolution string
+        /// (e.g. "resolution_2K") or null if the user cancelled.
+        /// </summary>
+        private string ShowHdrResolutionPicker(JsonElement hit)
+        {
+            var dlg = new Dialog
+            {
+                Title = "Pick HDR resolution",
+                Padding = new Eto.Drawing.Padding(16),
+                Resizable = false,
+                BackgroundColor = BkColors.DarkBg,
+            };
+
+            // Pixel sizes mirror blenderkit/download.py:available_resolutions_callback.
+            // We optionally filter by hit.maxResolution if the API surfaced it.
+            int maxResolution = 0;
+            if (hit.TryGetProperty("maxResolution", out var mr) && mr.ValueKind == JsonValueKind.Number)
+                maxResolution = mr.GetInt32();
+
+            var sizes = new (string Label, int Pixels, string WireValue)[]
+            {
+                ("0.5K (512px)",  512,  "resolution_0_5K"),
+                ("1K  (1024px)",  1024, "resolution_1K"),
+                ("2K  (2048px)",  2048, "resolution_2K"),
+                ("4K  (4096px)",  4096, "resolution_4K"),
+                ("8K  (8192px)",  8192, "resolution_8K"),
+                ("Original",       0,   "ORIGINAL"),
+            };
+
+            // Default: the user's panel-level Resolution dropdown choice,
+            // mapped through to the matching radio. Falls back to 1K.
+            var preset = ResolveDownloadResolution("hdr"); // never the strip override
+            var selectedRow = new RadioButton[sizes.Length];
+            RadioButton first = null;
+            var stack = new StackLayout
+            {
+                Orientation = Orientation.Vertical,
+                Spacing = 6,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            };
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                var s = sizes[i];
+                // Skip variants larger than the asset actually has.
+                if (maxResolution > 0 && s.Pixels > maxResolution && s.WireValue != "ORIGINAL")
+                    continue;
+                var rb = first == null
+                    ? new RadioButton { Text = s.Label, TextColor = BkColors.DarkText }
+                    : new RadioButton(first) { Text = s.Label, TextColor = BkColors.DarkText };
+                if (first == null) first = rb;
+                if (s.WireValue == preset) rb.Checked = true;
+                selectedRow[i] = rb;
+                stack.Items.Add(rb);
+            }
+            // Default-pick the first if none matched the preset.
+            if (first != null && !Array.Exists(selectedRow, r => r != null && r.Checked))
+                first.Checked = true;
+
+            string picked = null;
+            var okBtn = new Button { Text = "Download" };
+            okBtn.Click += (s, e) =>
+            {
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    if (selectedRow[i] != null && selectedRow[i].Checked == true)
+                    {
+                        picked = sizes[i].WireValue;
+                        break;
+                    }
+                }
+                dlg.Close();
+            };
+            var cancelBtn = new Button { Text = "Cancel" };
+            cancelBtn.Click += (s, e) => dlg.Close();
+
+            var btnRow = new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Items =
+                {
+                    new StackLayoutItem(null, expand: true),
+                    cancelBtn,
+                    okBtn,
+                },
+            };
+
+            var outer = new StackLayout
+            {
+                Orientation = Orientation.Vertical,
+                Spacing = 12,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items =
+                {
+                    new Label
+                    {
+                        Text = "HDRs can be heavy — pick the resolution to download:",
+                        TextColor = BkColors.DarkText,
+                    },
+                    stack,
+                    btnRow,
+                },
+            };
+            dlg.Content = outer;
+            ApplyDarkMode(dlg);
+            dlg.DefaultButton = okBtn;
+            dlg.AbortButton = cancelBtn;
+            dlg.ShowModal(this);
+            return picked;
         }
 
         private async Task StartDownloadForDrop(JsonElement hit, ActiveDrop drop)
@@ -3673,10 +3829,14 @@ namespace Blendkit.Rhino
             var xform = trans * spin * rot;
 
             // Fast path: a previous drop of the same asset_base_id
-            // already created an InstanceDefinition in this doc.
-            // Reuse it — no file import, no geometry duplication.
+            // already created an InstanceDefinition in this doc with
+            // the SAME post-process variant (full / lite / lite_dec).
+            // The variant is part of the cache key so toggling Strip
+            // Materials mid-session re-imports rather than re-instancing
+            // the previously-stripped block.
             string assetBaseId = _grid_static_currentAssetBaseId;
-            int cachedIdx = LookupCachedInstDef(doc, assetBaseId);
+            string cacheKey = CacheKeyForBaseId(assetBaseId);
+            int cachedIdx = LookupCachedInstDef(doc, cacheKey);
             if (cachedIdx >= 0)
             {
                 var iid = doc.Objects.AddInstanceObject(cachedIdx, xform);
@@ -3684,7 +3844,7 @@ namespace Blendkit.Rhino
                 {
                     StampBlenderKitMetadata(doc, new[] { iid }, path);
                     doc.Views.Redraw();
-                    BkLog.W($"ImportAtPoint: reused cached InstDef #{cachedIdx} for {assetBaseId}");
+                    BkLog.W($"ImportAtPoint: reused cached InstDef #{cachedIdx} for {cacheKey}");
                     SetStatus($"Re-used block at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}");
                     return;
                 }
@@ -3736,13 +3896,14 @@ namespace Blendkit.Rhino
             ApplyImportPostProcess(doc, newIds);
 
             // Wrap the imported geometry into an InstanceDefinition
-            // keyed by asset_base_id, then drop a single InstanceObject
-            // at xform. Subsequent drops of the same asset reuse the
-            // block via the fast path above.
-            int defIdx = BlockifyImported(doc, newIds, assetBaseId, assetName, xform);
+            // keyed by asset_base_id + variant tag. Different post-process
+            // settings produce separate InstDefs ("BK_<id>_lite" etc.),
+            // so toggling Strip Materials mid-session doesn't get fooled
+            // into reusing a previous block.
+            int defIdx = BlockifyImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
             if (defIdx >= 0)
             {
-                StoreCachedInstDef(doc, assetBaseId, defIdx);
+                StoreCachedInstDef(doc, cacheKey, defIdx);
                 // The new InstanceObject is the only object that
                 // wasn't in preIds. Suppress wireframe on it
                 // explicitly — InstanceObject doesn't inherit
@@ -3821,31 +3982,33 @@ namespace Blendkit.Rhino
             }
         }
 
-        private static int LookupCachedInstDef(global::Rhino.RhinoDoc doc, string assetBaseId)
+        private static int LookupCachedInstDef(global::Rhino.RhinoDoc doc, string cacheKey)
         {
-            if (doc == null || string.IsNullOrEmpty(assetBaseId)) return -1;
+            if (doc == null || string.IsNullOrEmpty(cacheKey)) return -1;
             if (_instDefCache.TryGetValue(doc.RuntimeSerialNumber, out var bag)
-                && bag.TryGetValue(assetBaseId, out var idx))
+                && bag.TryGetValue(cacheKey, out var idx))
             {
                 // The user may have purged the InstDef from the file.
                 // Verify it still exists; drop the stale entry on miss.
                 if (idx < 0 || idx >= doc.InstanceDefinitions.Count)
-                { bag.Remove(assetBaseId); }
+                { bag.Remove(cacheKey); }
                 else
                 {
                     var def = doc.InstanceDefinitions[idx];
-                    if (def == null || def.IsDeleted) { bag.Remove(assetBaseId); }
+                    if (def == null || def.IsDeleted) { bag.Remove(cacheKey); }
                     else return idx;
                 }
             }
             // Fallback: the file may have been opened from disk in a fresh
             // session (cache empty) but already contains an InstDef from a
             // previous run. Resolve by canonical name so we don't create
-            // a parallel BK_<id>_2 block.
-            var byName = doc.InstanceDefinitions.Find("BK_" + assetBaseId);
+            // a parallel BK_<id>_2 block. Cache key "<id>#variant" maps to
+            // InstDef name "BK_<id>_<variant>"; "<id>" alone maps to "BK_<id>".
+            var defName = "BK_" + cacheKey.Replace("#", "_");
+            var byName = doc.InstanceDefinitions.Find(defName);
             if (byName != null && !byName.IsDeleted)
             {
-                StoreCachedInstDef(doc, assetBaseId, byName.Index);
+                StoreCachedInstDef(doc, cacheKey, byName.Index);
                 return byName.Index;
             }
             return -1;
@@ -3888,15 +4051,19 @@ namespace Blendkit.Rhino
             System.Collections.Generic.IList<Guid> ids,
             string assetBaseId,
             string assetName,
-            global::Rhino.Geometry.Transform xform)
+            global::Rhino.Geometry.Transform xform,
+            string variantSuffix = "")
         {
             if (doc == null || ids == null || ids.Count == 0) return -1;
             // InstanceDefinitions need a unique name — disambiguate by
             // suffixing if a previous run (or the user) created one with
-            // the same root name.
+            // the same root name. variantSuffix encodes the post-process
+            // state ("_lite" / "_lite_dec" / "") so a stripped block and
+            // a full-fat block of the same asset live as distinct
+            // InstDefs and read distinctly in the Block Manager.
             string defNameRoot = !string.IsNullOrEmpty(assetBaseId)
-                ? "BK_" + assetBaseId
-                : (!string.IsNullOrEmpty(assetName) ? "BK_" + assetName : "BK_imported");
+                ? "BK_" + assetBaseId + variantSuffix
+                : (!string.IsNullOrEmpty(assetName) ? "BK_" + assetName + variantSuffix : "BK_imported" + variantSuffix);
             string defName = defNameRoot;
             int suffix = 1;
             // RhinoCommon: definitions are now always deleted permanently,
@@ -4038,12 +4205,13 @@ namespace Blendkit.Rhino
                     WithUndo(doc, "BlenderKit: Import asset (pick point)", () =>
                     {
 
-                    // Cache fast-path: same asset_base_id already lives in
-                    // the doc as an InstanceDefinition. Just ask for the
-                    // placement point and AddInstanceObject — no file
-                    // import.
+                    // Cache fast-path: same asset_base_id + variant already
+                    // lives in the doc as an InstanceDefinition. Variant tag
+                    // (Strip / Decimate state) is part of the cache key —
+                    // see CacheKeyForBaseId comment.
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
-                    int cachedFast = LookupCachedInstDef(doc, assetBaseIdFast);
+                    string cacheKeyFast = CacheKeyForBaseId(assetBaseIdFast);
+                    int cachedFast = LookupCachedInstDef(doc, cacheKeyFast);
                     if (cachedFast >= 0)
                     {
                         var gpFast = new global::Rhino.Input.Custom.GetPoint();
@@ -4104,10 +4272,10 @@ namespace Blendkit.Rhino
                     if (_grid_static_currentHit.HasValue
                         && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
                         assetName = nv.GetString();
-                    int defIdx = BlockifyImported(doc, added, assetBaseIdFast, assetName, xform);
+                    int defIdx = BlockifyImported(doc, added, assetBaseIdFast, assetName, xform, NameSuffixForVariant());
                     if (defIdx >= 0)
                     {
-                        StoreCachedInstDef(doc, assetBaseIdFast, defIdx);
+                        StoreCachedInstDef(doc, cacheKeyFast, defIdx);
                         // The new InstanceObject also needs SuppressWireframe;
                         // InstanceObjects don't inherit DisplayModeOverride
                         // from their components.
@@ -4150,6 +4318,16 @@ namespace Blendkit.Rhino
                 return;
             }
             if (BlockedByPlan(hit)) return;
+            // HDR: per-asset resolution picker (Blender add-on parity).
+            // Cancel from the picker aborts the download cleanly.
+            var assetType = hit.TryGetProperty("assetType", out var atEl) ? atEl.GetString() : "model";
+            if (string.Equals(assetType, "hdr", StringComparison.OrdinalIgnoreCase))
+            {
+                var picked = ShowHdrResolutionPicker(hit);
+                if (string.IsNullOrEmpty(picked)) return;
+                await StartDownloadFor(hit, overrideResolution: picked);
+                return;
+            }
             await StartDownloadFor(hit);
         }
 
@@ -4245,11 +4423,14 @@ namespace Blendkit.Rhino
             dlg.ShowModal(this);
         }
 
-        private async Task StartDownloadFor(JsonElement hit)
+        private async Task StartDownloadFor(JsonElement hit, string overrideResolution = null)
         {
             var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "(asset)";
             var assetType = hit.TryGetProperty("assetType", out var atEl) ? atEl.GetString() : "model";
-            var resolution = ResolveDownloadResolution(assetType);
+            // overrideResolution lets the HDR picker hand us the user's
+            // explicit choice; otherwise fall back to the panel's preset
+            // (with strip-materials override gating for model/printable).
+            var resolution = overrideResolution ?? ResolveDownloadResolution(assetType);
             var sel = resolution.Replace("resolution_", "").Replace("0_5K", "0.5K");
             // Capture hit context for the import-side blockify pipeline.
             // ImportFile / ImportAtPickedPoint read these to look up the
@@ -4716,12 +4897,13 @@ namespace Blendkit.Rhino
                     WithUndo(doc, "BlenderKit: Import asset", () =>
                     {
 
-                    // Cache fast-path: same asset_base_id already
-                    // blockified earlier in the session. Place a single
-                    // InstanceObject at world origin and skip the file
-                    // import entirely.
+                    // Cache fast-path: same asset_base_id + variant already
+                    // blockified earlier in the session. Variant tag (Strip
+                    // / Decimate state) is part of the cache key so a
+                    // toggle between drops doesn't reuse a stale block.
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
-                    int cachedFast = LookupCachedInstDef(doc, assetBaseIdFast);
+                    string cacheKeyFast = CacheKeyForBaseId(assetBaseIdFast);
+                    int cachedFast = LookupCachedInstDef(doc, cacheKeyFast);
                     if (cachedFast >= 0)
                     {
                         var iid = doc.Objects.AddInstanceObject(cachedFast, global::Rhino.Geometry.Transform.Identity);
@@ -4761,10 +4943,10 @@ namespace Blendkit.Rhino
                             && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
                             assetName = nv.GetString();
                         int defIdx = BlockifyImported(doc, newIds, assetBaseIdFast, assetName,
-                            global::Rhino.Geometry.Transform.Identity);
+                            global::Rhino.Geometry.Transform.Identity, NameSuffixForVariant());
                         if (defIdx >= 0)
                         {
-                            StoreCachedInstDef(doc, assetBaseIdFast, defIdx);
+                            StoreCachedInstDef(doc, cacheKeyFast, defIdx);
                             // Apply wireframe suppression to the new
                             // InstanceObject too — see ImportAtPoint
                             // comment. Components don't propagate.
