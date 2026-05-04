@@ -3513,13 +3513,23 @@ namespace Blendkit.Rhino
 
         private void ImportForDrop(ActiveDrop drop, string filePath)
         {
-            if (drop.DropPoint.HasValue)
+            // HDR / EXR aren't geometry — Rhino's _-Import refuses them
+            // ("unsupported file"). Drag-drops on HDR assets should
+            // behave like a click-import: bind the file as the doc's
+            // render environment, no point-targeting. Mirrors the
+            // ImportFile branch a few hundred lines below.
+            if (DownloadService.IsHdrImage(filePath))
+            {
+                SetEnvironmentFromFile(filePath);
+            }
+            else if (drop.DropPoint.HasValue)
                 ImportAtPoint(filePath, drop.DropPoint.Value, drop.Normal, drop.SpinRadians);
             else
                 ImportAtPickedPoint(filePath);
             drop.Done = true;
             drop.Preview.Enabled = false;
             _drops.Remove(drop);
+            RefreshDownloadsButton();
         }
 
         /// <summary>
