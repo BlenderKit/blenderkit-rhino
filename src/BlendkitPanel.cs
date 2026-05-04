@@ -1219,23 +1219,33 @@ namespace Blendkit.Rhino
                 ClientSize = new Eto.Drawing.Size(520, 320),
                 Padding = new Eto.Drawing.Padding(12),
                 Resizable = true,
+                // Match the rest of the panel's dark theme — without this
+                // the dialog inherits the OS chrome (white on Windows) and
+                // the dark-text labels render almost-invisible against it.
+                BackgroundColor = BkColors.DarkBg,
             };
 
-            var listLayout = new DynamicLayout();
-            listLayout.Padding = new Eto.Drawing.Padding(0);
-            listLayout.Spacing = new Eto.Drawing.Size(0, 4);
+            // StackLayout (vertical) instead of DynamicLayout so each row
+            // takes its natural height and the LAST row doesn't absorb
+            // vertical slack — that was the cause of the giant Cancel
+            // button stretched to fill the bottom of the list.
+            var listLayout = new StackLayout
+            {
+                Orientation = Orientation.Vertical,
+                Spacing = 4,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            };
 
             void RebuildList()
             {
-                listLayout.Clear();
+                listLayout.Items.Clear();
                 if (_drops.Count == 0)
                 {
-                    listLayout.AddRow(new Label
+                    listLayout.Items.Add(new Label
                     {
                         Text = "No active downloads.",
                         TextColor = BkColors.DarkText,
                     });
-                    listLayout.Create();
                     return;
                 }
                 // Snapshot — Cancel mutates _drops mid-iteration.
@@ -1262,15 +1272,20 @@ namespace Blendkit.Rhino
                         CancelDrop(local);
                         RebuildList();
                     };
-                    var row = new DynamicLayout();
-                    row.BeginHorizontal();
-                    row.Add(nameLbl, true);
-                    row.Add(statusLbl);
-                    row.Add(cancelBtn);
-                    row.EndHorizontal();
-                    listLayout.AddRow(row);
+                    var row = new StackLayout
+                    {
+                        Orientation = Orientation.Horizontal,
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        Spacing = 8,
+                        Items =
+                        {
+                            new StackLayoutItem(nameLbl, expand: true),
+                            statusLbl,
+                            cancelBtn,
+                        },
+                    };
+                    listLayout.Items.Add(row);
                 }
-                listLayout.Create();
             }
 
             RebuildList();
@@ -1284,15 +1299,23 @@ namespace Blendkit.Rhino
             var closeBtn = new Button { Text = "Close" };
             closeBtn.Click += (s, e) => dlg.Close();
 
-            var btnRow = new DynamicLayout();
-            btnRow.BeginHorizontal();
-            btnRow.Add(cancelAllBtn);
-            btnRow.Add(null, true); // spacer
-            btnRow.Add(closeBtn);
-            btnRow.EndHorizontal();
+            var btnRow = new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Items =
+                {
+                    cancelAllBtn,
+                    new StackLayoutItem(null, expand: true),
+                    closeBtn,
+                },
+            };
 
             var outer = new DynamicLayout();
             outer.Spacing = new Eto.Drawing.Size(0, 8);
+            // Scrollable wraps the list so long lists don't push the button
+            // row off the bottom of the dialog. xscale + yscale = true so
+            // it expands; the button row below it has natural height.
             outer.Add(new Scrollable
             {
                 Border = BorderType.None,
@@ -1841,6 +1864,12 @@ namespace Blendkit.Rhino
             var webBtn = new Button { Text = "Open on blenderkit.com" };
             webBtn.Click += (s, e) => OpenAssetOnWeb(hit);
             actionsCol.AddRow(webBtn);
+            // Spacer at the bottom of the column. Without this, Eto's
+            // DynamicLayout absorbs the column's vertical slack into the
+            // last AddRow — making "Open on blenderkit.com" stretch to
+            // ~3× the height of the other action buttons. The null +
+            // yscale=true row eats the slack instead.
+            actionsCol.Add(null, false, true);
 
             // Comments button used to live here and just deep-linked to
             // #comments on the asset gallery page. It was a confusing UX
@@ -1868,8 +1897,19 @@ namespace Blendkit.Rhino
             };
 
             // ---- RIGHT-BOTTOM: author info row ----
-            var authorRow = new DynamicLayout { Padding = new Padding(0, 8, 0, 0) };
-            authorRow.BeginHorizontal();
+            // StackLayout with VerticalContentAlignment.Top pins both the
+            // 72×72 avatar and the bio text column to the top of the row.
+            // Previously this was a DynamicLayout with BeginHorizontal,
+            // which vertically *centers* a small item against a tall
+            // sibling — looked awkward when the bio wrapped to several
+            // lines and the avatar floated halfway down the row.
+            var authorRow = new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalContentAlignment = VerticalAlignment.Top,
+                Spacing = 8,
+                Padding = new Padding(0, 8, 0, 0),
+            };
             // Gravatar / author avatar. Three sources, in priority:
             //   1. If the Go client has already cached the avatar (from
             //      /profiles/download_gravatar_image), load from temp.
@@ -1941,7 +1981,7 @@ namespace Blendkit.Rhino
                 }
             }
             catch (Exception ex) { BkLog.W("avatar resolve failed: " + ex.Message); }
-            authorRow.Add(authorThumb);
+            authorRow.Items.Add(authorThumb);
             var authorTextCol = new DynamicLayout { Padding = new Padding(8, 0, 0, 0) };
             if (!string.IsNullOrEmpty(authorName))
             {
@@ -1976,8 +2016,7 @@ namespace Blendkit.Rhino
                     TextColor = BkColors.DarkText,
                 });
             }
-            authorRow.Add(authorTextCol, xscale: true);
-            authorRow.EndHorizontal();
+            authorRow.Items.Add(new StackLayoutItem(authorTextCol, expand: true));
 
             // ---- RIGHT COLUMN: top split + author below ----
             var rightCol = new DynamicLayout { Padding = 0, Spacing = new Size(0, 8) };
@@ -3622,13 +3661,18 @@ namespace Blendkit.Rhino
                 return;
             }
 
-            // Find newly-imported objects.
+            // Find newly-imported objects. We DON'T SuppressWireframe per
+            // object here — when blockify succeeds (the common case)
+            // these objects move into an InstanceDefinition and stop
+            // being directly rendered, so the per-object display
+            // override is wasted work. The wrap-up below applies it on
+            // either the InstanceObject (success) or the original
+            // members (blockify-failed fallback) instead.
             var newIds = new System.Collections.Generic.List<Guid>();
             foreach (var o in doc.Objects)
             {
                 if (preIds.Contains(o.Id)) continue;
                 newIds.Add(o.Id);
-                SuppressWireframe(o);
             }
             if (newIds.Count == 0)
             {
@@ -3678,8 +3722,15 @@ namespace Blendkit.Rhino
             {
                 // Blockify failed (no asset_base_id, or InstDef.Add
                 // returned -1). Fall back to the original behaviour:
-                // translate originals in place.
-                foreach (var id in newIds) doc.Objects.Transform(id, xform, true);
+                // translate originals in place. Now we DO need
+                // per-member SuppressWireframe — they're the visible
+                // objects.
+                foreach (var id in newIds)
+                {
+                    doc.Objects.Transform(id, xform, true);
+                    var ro = doc.Objects.FindId(id);
+                    if (ro != null) SuppressWireframe(ro);
+                }
                 StampBlenderKitMetadata(doc, newIds, path);
             }
             doc.Views.Redraw();
@@ -3978,18 +4029,16 @@ namespace Blendkit.Rhino
                     SetStatus($"Importing {System.IO.Path.GetFileName(path)} — pick a point in the viewport (Esc = origin).");
                     var script = $"_-Import \"{path}\" _Enter _Enter";
                     var ok = RhinoApp.RunScript(script, false);
-                    doc.Views.Redraw();
                     if (!ok) { AddMarkerCube(path); return; }
 
-                    // Identify objects added by the import — we'll move them.
+                    // Identify objects added by the import. SuppressWireframe
+                    // is deferred to the post-blockify branches so we don't
+                    // burn cycles on member geometry that's about to be
+                    // hidden behind an InstanceObject anyway.
                     var added = new List<Guid>();
                     foreach (var o in doc.Objects)
                     {
-                        if (!beforeIds.Contains(o.Id))
-                        {
-                            added.Add(o.Id);
-                            SuppressWireframe(o);
-                        }
+                        if (!beforeIds.Contains(o.Id)) added.Add(o.Id);
                     }
 
                     // Strip materials / decimate before the geometry gets
@@ -4031,7 +4080,14 @@ namespace Blendkit.Rhino
                     }
                     else
                     {
-                        foreach (var id in added) doc.Objects.Transform(id, xform, true);
+                        // Blockify failed → originals stay visible, so
+                        // suppress wireframe per-object now.
+                        foreach (var id in added)
+                        {
+                            doc.Objects.Transform(id, xform, true);
+                            var ro = doc.Objects.FindId(id);
+                            if (ro != null) SuppressWireframe(ro);
+                        }
                         StampBlenderKitMetadata(doc, added, path);
                     }
                     doc.Views.Redraw();
@@ -4643,13 +4699,15 @@ namespace Blendkit.Rhino
                     var ok = RhinoApp.RunScript(script, false);
                     if (ok)
                     {
-                        // Suppress wireframe on every just-imported object.
+                        // Collect the just-imported objects; SuppressWireframe
+                        // is deferred to the post-blockify branches so we
+                        // don't burn cycles on member geometry that's about
+                        // to be hidden inside an InstanceDefinition.
                         var newIds = new System.Collections.Generic.List<Guid>();
                         foreach (var o in doc.Objects)
                         {
                             if (preIds.Contains(o.Id)) continue;
                             newIds.Add(o.Id);
-                            SuppressWireframe(o);
                         }
                         // Strip materials / decimate before blockify.
                         ApplyImportPostProcess(doc, newIds);
@@ -4679,6 +4737,13 @@ namespace Blendkit.Rhino
                         }
                         else
                         {
+                            // Blockify failed → originals stay visible,
+                            // suppress per-member now.
+                            foreach (var id in newIds)
+                            {
+                                var ro = doc.Objects.FindId(id);
+                                if (ro != null) SuppressWireframe(ro);
+                            }
                             StampBlenderKitMetadata(doc, newIds, path);
                             BkLog.W($"ImportFile: blockify skipped/failed for assetBaseId='{assetBaseIdFast}' (newIds={newIds.Count})");
                         }
