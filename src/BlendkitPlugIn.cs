@@ -202,12 +202,33 @@ namespace Blendkit.Rhino
             Panels.RegisterPanel(this, typeof(BlendkitPanel), "BlenderKit v0.1", icon);
         }
 
+        // Bound on auto-respawns within a single Rhino session. The poller
+        // calls EnsureGoClient when the client dies; without a cap, a
+        // fundamentally-broken binary (missing dependency, bad port, etc.)
+        // would spin Process.Start in an infinite loop. 5 is generous —
+        // expected: 0 in a healthy session, 1 if the user kills it manually.
+        private const int MaxAutoRespawns = 5;
+        private int _autoRespawnCount;
+        private readonly object _ensureLock = new object();
+
         /// <summary>
         /// If a Go client is already serving on any candidate port (e.g. started
         /// by a running Blender), attach to it. Otherwise spawn our own with
         /// stdout/stderr redirected to a log file so we can diagnose failures.
+        ///
+        /// Public + thread-safe so the report poller can call it after it
+        /// notices the client has gone away (user killed client.exe, the
+        /// process crashed, etc.). Multiple concurrent callers are
+        /// serialized through <see cref="_ensureLock"/>; the discover step
+        /// short-circuits the second caller when the first has already
+        /// brought the client back up.
         /// </summary>
-        private void EnsureGoClient()
+        public void EnsureGoClient()
+        {
+            lock (_ensureLock) { EnsureGoClientLocked(); }
+        }
+
+        private void EnsureGoClientLocked()
         {
             // Step 1: try to discover an existing client.
             var existing = ClientLib.DiscoverPortAsync().GetAwaiter().GetResult();
@@ -215,6 +236,26 @@ namespace Blendkit.Rhino
             {
                 RhinoApp.WriteLine($"[BlenderKit] Found existing Go client on port {existing}.");
                 return;
+            }
+            if (_autoRespawnCount >= MaxAutoRespawns)
+            {
+                RhinoApp.WriteLine($"[BlenderKit] Hit auto-respawn cap ({MaxAutoRespawns}). Restart Rhino to retry.");
+                return;
+            }
+            _autoRespawnCount++;
+
+            // Clean up any prior process handle (will be the case on a
+            // respawn after the user killed client.exe). Process.Dispose
+            // releases the OS handle + the stdout/stderr async readers.
+            if (_clientProcess != null)
+            {
+                try
+                {
+                    if (!_clientProcess.HasExited) { _clientProcess.Kill(); }
+                    _clientProcess.Dispose();
+                }
+                catch { /* best effort */ }
+                _clientProcess = null;
             }
 
             // Step 2: spawn our own. On Windows we ship `client.exe`,

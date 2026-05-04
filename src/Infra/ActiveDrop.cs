@@ -43,5 +43,11 @@ namespace Blendkit.Rhino.Infra
         // Once the imported geometry lands we set this so progress callbacks
         // ignore the entry.
         public bool Done;
+        // Free-form status string for the Downloads popup. Examples:
+        // "Downloading…", "Converting…", "Waiting for drop", "Error: …".
+        // Set at the call sites that mutate the drop's lifecycle so the
+        // popup can render up-to-date status without us re-deriving from
+        // the various task ids.
+        public string Status = "Starting…";
     }
 }

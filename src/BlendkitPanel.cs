@@ -116,6 +116,16 @@ namespace Blendkit.Rhino
             }
         }
         private readonly Label _status = new Label { Text = "Ready." };
+        // Compact "⏳ Downloads (N)" button — only visible while at least
+        // one drop is in flight. Click opens a dialog where the user can
+        // cancel pending downloads / clear stuck preview cubes from the
+        // viewport.
+        private readonly Button _downloadsBtn = new Button
+        {
+            Text = "⏳ Downloads (0)",
+            Visible = false,
+            ToolTip = "Click to manage / cancel in-flight downloads",
+        };
         // Horizontal bar of "filter chips" (e.g. [✕ Free] [✕ Quality 5+]
         // [✕ author: Vilém Duha]). Click ✕ to clear that one filter and
         // re-search. Mirrors the Blender addon's filter-chip strip.
@@ -341,6 +351,7 @@ namespace Blendkit.Rhino
             _grid.CellRightClicked += (s, hit) => ShowAssetDetails(hit);
             _grid.NeedMore += (s, e) => OnNeedMore();
             _downloadBtn.Click += (s, e) => OnDownload();
+            _downloadsBtn.Click += (s, e) => ShowDownloadsDialog();
             _loginBtn.Click += (s, e) => OnLoginToggle();
 
             foreach (var r in new[] { "0.5K", "1K", "2K", "4K", "8K", "ORIGINAL" })
@@ -838,7 +849,15 @@ namespace Blendkit.Rhino
             layout.AddRow(searchRow);
             layout.AddRow(filtersExpander);
             layout.AddRow(_chipBar);
-            layout.AddRow(_status);
+            // Status line + "Downloads (N)" sit on the same row so the
+            // download manager is one click away without burning a row
+            // of vertical real estate when nothing's in flight.
+            var statusRow = new DynamicLayout();
+            statusRow.BeginHorizontal();
+            statusRow.Add(_status, true);
+            statusRow.Add(_downloadsBtn);
+            statusRow.EndHorizontal();
+            layout.AddRow(statusRow);
             layout.AddRow(_searchUrlBox);
             layout.Add(_grid, true, true);
             layout.AddRow(_downloadBtn);
@@ -1162,6 +1181,187 @@ namespace Blendkit.Rhino
                     menu.Items.Add(BuildCategoryMenuItem(node));
             }
             menu.Show(_category);
+        }
+
+        /// <summary>
+        /// Update the "⏳ Downloads (N)" button label + visibility from the
+        /// current <see cref="_drops"/> list. Called from anywhere we
+        /// mutate that list — only mutation entry points need to remember
+        /// to call this; everywhere else gets the right state automatically.
+        /// </summary>
+        private void RefreshDownloadsButton()
+        {
+            int n = _drops.Count;
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                _downloadsBtn.Visible = n > 0;
+                _downloadsBtn.Text = $"⏳ Downloads ({n})";
+            }));
+        }
+
+        /// <summary>
+        /// Modal dialog listing every active <see cref="ActiveDrop"/> with
+        /// its current Status string and a "Cancel" button. Cancelling a
+        /// drop hides its preview cube and removes it from the panel's
+        /// tracking list — the underlying Go-client task is left to
+        /// finish on its own (no /cancel endpoint exists yet), but the
+        /// result is dropped on the floor since nothing's listening.
+        ///
+        /// "Cancel all" at the bottom for the common "I have a bunch of
+        /// stuck green cubes from a flaky session, get rid of them all"
+        /// case the user reported.
+        /// </summary>
+        private void ShowDownloadsDialog()
+        {
+            var dlg = new Dialog
+            {
+                Title = "Active downloads",
+                ClientSize = new Eto.Drawing.Size(520, 320),
+                Padding = new Eto.Drawing.Padding(12),
+                Resizable = true,
+            };
+
+            var listLayout = new DynamicLayout();
+            listLayout.Padding = new Eto.Drawing.Padding(0);
+            listLayout.Spacing = new Eto.Drawing.Size(0, 4);
+
+            void RebuildList()
+            {
+                listLayout.Clear();
+                if (_drops.Count == 0)
+                {
+                    listLayout.AddRow(new Label
+                    {
+                        Text = "No active downloads.",
+                        TextColor = BkColors.DarkText,
+                    });
+                    listLayout.Create();
+                    return;
+                }
+                // Snapshot — Cancel mutates _drops mid-iteration.
+                var snapshot = _drops.ToArray();
+                foreach (var d in snapshot)
+                {
+                    var local = d; // capture
+                    var name = string.IsNullOrEmpty(local.AssetName) ? "(unnamed)" : local.AssetName;
+                    var nameLbl = new Label
+                    {
+                        Text = name,
+                        TextColor = BkColors.DarkText,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    var statusLbl = new Label
+                    {
+                        Text = local.Status ?? "",
+                        TextColor = BkColors.DarkText,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    var cancelBtn = new Button { Text = "Cancel" };
+                    cancelBtn.Click += (s, e) =>
+                    {
+                        CancelDrop(local);
+                        RebuildList();
+                    };
+                    var row = new DynamicLayout();
+                    row.BeginHorizontal();
+                    row.Add(nameLbl, true);
+                    row.Add(statusLbl);
+                    row.Add(cancelBtn);
+                    row.EndHorizontal();
+                    listLayout.AddRow(row);
+                }
+                listLayout.Create();
+            }
+
+            RebuildList();
+
+            var cancelAllBtn = new Button { Text = "Cancel all" };
+            cancelAllBtn.Click += (s, e) =>
+            {
+                foreach (var d in _drops.ToArray()) CancelDrop(d);
+                RebuildList();
+            };
+            var closeBtn = new Button { Text = "Close" };
+            closeBtn.Click += (s, e) => dlg.Close();
+
+            var btnRow = new DynamicLayout();
+            btnRow.BeginHorizontal();
+            btnRow.Add(cancelAllBtn);
+            btnRow.Add(null, true); // spacer
+            btnRow.Add(closeBtn);
+            btnRow.EndHorizontal();
+
+            var outer = new DynamicLayout();
+            outer.Spacing = new Eto.Drawing.Size(0, 8);
+            outer.Add(new Scrollable
+            {
+                Border = BorderType.None,
+                ExpandContentWidth = true,
+                Content = listLayout,
+            }, true, true);
+            outer.Add(btnRow);
+            dlg.Content = outer;
+            ApplyDarkMode(dlg);
+            dlg.ShowModal(this);
+        }
+
+        /// <summary>
+        /// Set <see cref="ActiveDrop.Status"/> on the drop matching this
+        /// task event so the Downloads popup shows live progress. Looks
+        /// the drop up by either DownloadTaskId or ConvertTaskId — whichever
+        /// matches the inbound task_id.
+        /// </summary>
+        private void UpdateDropStatus(string type, string status, string taskId, JsonElement task)
+        {
+            if (string.IsNullOrEmpty(taskId)) return;
+            ActiveDrop drop = _drops.Find(d => d.DownloadTaskId == taskId || d.ConvertTaskId == taskId);
+            if (drop == null) return;
+            string msg = null;
+            if (type == "asset_download")
+            {
+                if (status == "finished") msg = "Downloaded — converting…";
+                else if (status == "error") msg = "Error: download failed";
+                else
+                {
+                    int prog = task.TryGetProperty("progress", out var p) && p.ValueKind == JsonValueKind.Number
+                        ? p.GetInt32() : -1;
+                    msg = prog >= 0 ? $"Downloading… {prog}%" : "Downloading…";
+                }
+            }
+            else if (type == "run_blender_script" || type == "blend_to_glb")
+            {
+                if (status == "finished") msg = "Converted — drop to place";
+                else if (status == "error") msg = "Error: convert failed";
+                else msg = "Converting (Blender)…";
+            }
+            else if (type == "blend_to_material_json" && status == "error")
+            {
+                msg = "Error: material extract failed";
+            }
+            if (msg != null) drop.Status = msg;
+        }
+
+        /// <summary>
+        /// Cancel an in-flight drop: hide the preview cube, remove the
+        /// drop from <see cref="_drops"/>, and refresh the downloads
+        /// button. The Go-client task is left to finish on its own —
+        /// when its result lands the dispatcher will find no matching
+        /// drop and silently drop the message.
+        /// </summary>
+        private void CancelDrop(ActiveDrop drop)
+        {
+            if (drop == null) return;
+            try { drop.Done = true; drop.Preview.Enabled = false; } catch { }
+            _drops.Remove(drop);
+            // Also drop any pending convert / material-extract action
+            // bound to this drop's task ids so the orphan-result handlers
+            // don't import geometry the user already cancelled.
+            if (!string.IsNullOrEmpty(drop.ConvertTaskId))
+                _pendingConvertActions.Remove(drop.ConvertTaskId);
+            if (!string.IsNullOrEmpty(drop.DownloadTaskId))
+                _pendingMaterialDrops.TryRemove(drop.DownloadTaskId, out _);
+            BkLog.W($"CancelDrop: removed drop '{drop.AssetName}' (download={drop.DownloadTaskId}, convert={drop.ConvertTaskId})");
+            RefreshDownloadsButton();
         }
 
         /// <summary>
@@ -3078,7 +3278,9 @@ namespace Blendkit.Rhino
         private ActiveDrop StartDrag(string glbPath, bool alreadyDownloaded, int cachedInstanceDef = -1)
         {
             var drop = new ActiveDrop();
+            drop.Status = alreadyDownloaded ? "Cached — drop to place" : "Downloading…";
             _drops.Add(drop);
+            RefreshDownloadsButton();
 
             drop.Preview.Progress = alreadyDownloaded ? 1.0 : 0.0;
             drop.Preview.Label = alreadyDownloaded ? "Drop to place" : "Downloading…";
@@ -3975,6 +4177,17 @@ namespace Blendkit.Rhino
             var status = task.TryGetProperty("status", out var s) ? (s.GetString() ?? "?") : "?";
             var taskId = task.TryGetProperty("task_id", out var id) ? (id.GetString() ?? "") : "";
             var idShort = taskId.Length > 8 ? taskId.Substring(0, 8) : taskId;
+
+            // Keep the downloads-counter button in sync after every task
+            // event — the various Handle*Task handlers below mutate _drops
+            // (insertion / removal) in places too scattered to wrap each
+            // one individually. Doing it once here at the dispatcher is
+            // good enough since every removal is task-driven.
+            try { RefreshDownloadsButton(); } catch { }
+
+            // Update Status string on the matching drop so the popup
+            // shows live progress instead of "Starting…" forever.
+            UpdateDropStatus(type, status, taskId, task);
 
             if (type != "client_status")
                 BkLog.W($"task type={type} status={status} id={idShort}");

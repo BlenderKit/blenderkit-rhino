@@ -36,6 +36,13 @@ namespace Blendkit.Rhino.Infra
         {
             var ct = _cts.Token;
             int iter = 0;
+            // Consecutive failures observed while the cached port is set.
+            // Used to trigger a respawn after the client appears to have
+            // died (e.g. user killed client.exe in Task Manager). Mirrors
+            // blenderkit/timer.py:report_failure_handler in the Blender
+            // add-on, which calls start_blenderkit_client() once after
+            // the first failure in a run.
+            int consecutiveRefused = 0;
             while (!ct.IsCancellationRequested)
             {
                 if (iter++ % 30 == 0) // ~ every 9 seconds
@@ -47,6 +54,11 @@ namespace Blendkit.Rhino.Infra
                         await ClientLib.DiscoverPortAsync(ct);
                     if (ClientLib.ActivePort == null)
                     {
+                        // No port found via discovery either — ask the
+                        // plug-in to (re)spawn its own client. EnsureGoClient
+                        // is idempotent + capped, so this is safe to call
+                        // every loop until something answers.
+                        TryRespawnClient();
                         await Task.Delay(1000, ct);
                         continue;
                     }
@@ -66,6 +78,9 @@ namespace Blendkit.Rhino.Infra
                     if (iter % 30 == 1) // sample roughly every 9s
                         RhinoApp.WriteLine($"[BlenderKit][poll] body.Length={body?.Length ?? 0}, head={(body?.Length > 0 ? body.Substring(0, Math.Min(120, body.Length)) : "")}");
                     Dispatch(body);
+                    // Clean tick — reset the failure counter so a future
+                    // outage starts counting from zero again.
+                    consecutiveRefused = 0;
                 }
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
@@ -78,18 +93,46 @@ namespace Blendkit.Rhino.Infra
                     // port forever and the panel would silently stop
                     // showing tasks.
                     var msg = ex.Message ?? "";
-                    if (msg.Contains("actively refused")
+                    bool refused = msg.Contains("actively refused")
                         || msg.Contains("connection refused")
                         || msg.Contains("ECONNREFUSED")
                         || msg.Contains("No connection could be made")
-                        || msg.Contains("target machine actively refused"))
+                        || msg.Contains("target machine actively refused");
+                    if (refused)
                     {
                         ClientLib.InvalidatePort();
+                        consecutiveRefused++;
+                        // Three failures back-to-back at 300ms cadence
+                        // ≈ 1 second of dead client. Respawn on the
+                        // *third* so a transient blip doesn't spam
+                        // Process.Start, but a real death gets recovered
+                        // before the user's first action notices.
+                        if (consecutiveRefused == 3) TryRespawnClient();
                     }
                 }
                 try { await Task.Delay(300, ct); }
                 catch (OperationCanceledException) { break; }
             }
+        }
+
+        /// <summary>
+        /// Ask the plug-in to re-spawn the Go client. Runs on a background
+        /// task so the poll loop isn't blocked by the 5-second wait inside
+        /// EnsureGoClient. EnsureGoClient handles its own respawn cap and
+        /// concurrency lock, so this is safe to call repeatedly.
+        /// </summary>
+        private static void TryRespawnClient()
+        {
+            var plugin = BlendkitPlugIn.Instance;
+            if (plugin == null) return;
+            _ = Task.Run(() =>
+            {
+                try { plugin.EnsureGoClient(); }
+                catch (Exception ex)
+                {
+                    RhinoApp.WriteLine($"[BlenderKit] respawn attempt failed: {ex.Message}");
+                }
+            });
         }
 
         private void Dispatch(string body)
