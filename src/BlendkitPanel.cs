@@ -3404,15 +3404,23 @@ namespace Blendkit.Rhino
         /// </summary>
         /// <summary>
         /// Resolve the download resolution string the Go client expects
-        /// (e.g. <c>"resolution_2K"</c>). When Strip Materials is on we
-        /// always pick the lowest available size (<c>resolution_0_5K</c>)
-        /// — saves bandwidth + cache space on assets we'll discard the
-        /// textures from anyway. The dropdown is greyed out in that mode
-        /// so the override matches what the user sees.
+        /// (e.g. <c>"resolution_2K"</c>).
+        ///
+        /// The Strip Materials override (force lowest variant) only
+        /// applies to <c>model</c> / <c>printable</c> assets — those are
+        /// the ones whose textures we discard post-import. For
+        /// <c>hdr</c> the asset *is* the texture (stripping is
+        /// nonsensical), and <c>material</c> assets are also a no-op
+        /// for the strip flag, so honor the user's resolution choice
+        /// in both cases. Mirrors the Blender add-on, which always
+        /// respects the user's chosen resolution for HDRs.
         /// </summary>
-        private string ResolveDownloadResolution()
+        private string ResolveDownloadResolution(string assetType = null)
         {
-            if (_stripMaterials.Checked == true) return "resolution_0_5K";
+            var t = (assetType ?? "model").ToLowerInvariant();
+            bool stripApplies = t == "model" || t == "printable";
+            if (stripApplies && _stripMaterials.Checked == true)
+                return "resolution_0_5K";
             // Translate UI label like "2K" → "resolution_2K" the Go client wants.
             // "0.5K" maps to "resolution_0_5K".
             var sel = _resolution.SelectedValue?.ToString() ?? "2K";
@@ -3493,7 +3501,8 @@ namespace Blendkit.Rhino
         private async Task StartDownloadForDrop(JsonElement hit, ActiveDrop drop)
         {
             var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "(asset)";
-            var resolution = ResolveDownloadResolution();
+            var assetType = hit.TryGetProperty("assetType", out var atEl) ? atEl.GetString() : "model";
+            var resolution = ResolveDownloadResolution(assetType);
             var sel = resolution.Replace("resolution_", "").Replace("0_5K", "0.5K");
             SetStatus($"Starting download: {name} @ {sel}…");
             try
@@ -4216,7 +4225,8 @@ namespace Blendkit.Rhino
         private async Task StartDownloadFor(JsonElement hit)
         {
             var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "(asset)";
-            var resolution = ResolveDownloadResolution();
+            var assetType = hit.TryGetProperty("assetType", out var atEl) ? atEl.GetString() : "model";
+            var resolution = ResolveDownloadResolution(assetType);
             var sel = resolution.Replace("resolution_", "").Replace("0_5K", "0.5K");
             // Capture hit context for the import-side blockify pipeline.
             // ImportFile / ImportAtPickedPoint read these to look up the
