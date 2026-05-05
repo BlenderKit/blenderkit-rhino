@@ -28,6 +28,7 @@
   <ItemGroup>
     <Compile Include="..\src\Infra\SearchService.cs" />
     <Compile Include="..\src\Infra\CategoriesService.cs" />
+    <Compile Include="..\src\Infra\CategoryStore.cs" />
     <Compile Include="..\src\Infra\AuthService.cs" />
     <!-- ClientLib is referenced by SearchService — stub out the network calls
          in tests via a thin shim if needed. For now SearchService is mostly
