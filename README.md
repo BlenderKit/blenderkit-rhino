@@ -94,15 +94,29 @@ deploy\release.bat 0.1.2
 This refuses to run if the working tree is dirty, then bumps the
 version in `BlendkitRhino.csproj` and both `manifest*.yml` files,
 commits the bump (`release: 0.1.2`), runs `deploy_rhino.bat` to
-build + pack the `.yak`, `yak push`es it to https://yak.rhino3d.com,
+build + pack the **Windows** `.yak`, runs `pack_mac.bat` to
+cross-build + pack the **macOS** `.yak` (darwin/arm64 client +
+`net7.0` `.rhp`), `yak push`es both to https://yak.rhino3d.com,
 and tags `v0.1.2` in git (pushed to `origin`).
 
 Requires `yak login` to have run at least once (token cached at
-`%APPDATA%\McNeel\yak.yml`). If push fails with "error retrieving
-your cached token", run `yak login` and re-invoke `release.bat`
-with the same version — the local commit is already in place;
-deploy will produce the same `.yak`.
+`%APPDATA%\McNeel\yak.yml`) and Go on `PATH` (or at
+`C:\Program Files\Go\bin\go.exe`) for the darwin client
+cross-compile. If push fails with "error retrieving your cached
+token", run `yak login` and re-invoke `release.bat` with the
+same version — the local commit is already in place; the build
+steps will produce the same `.yak` files.
 
 The Rhino kill behaviour from `deploy_rhino.bat` applies — Rhino
 will be closed during the deploy step so the `.rhp` can be copied
 into the local plug-ins folder.
+
+If you only need to rebuild the macOS `.yak` (e.g. you fixed
+something Mac-specific between releases without bumping the
+version), run `deploy\pack_mac.bat` directly. It produces
+`build\Release\packages\blenderkit-<version>-rh8_0-mac.yak`,
+which you can then `yak push` manually. The packer also patches
+the zip's `external_attr` on `client/client` to `0o100755` so
+the Mach-O binary is executable on the user's Mac — `yak.exe`
+running on Windows otherwise leaves it at `0` and the binary
+won't run on extract.

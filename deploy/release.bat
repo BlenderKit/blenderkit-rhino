@@ -10,14 +10,20 @@ REM   1. Validates working tree is clean (no uncommitted changes).
 REM   2. Bumps <Version> in BlendkitRhino.csproj + version: in both
 REM      manifest.yml and manifest_mac.yml.
 REM   3. Commits the bump as a single commit ("release: X.Y.Z").
-REM   4. Runs deploy_rhino.bat (builds + packs the .yak).
-REM   5. yak push the new .yak to https://yak.rhino3d.com.
-REM   6. git tag vX.Y.Z and push the tag to origin.
+REM   4. Runs deploy_rhino.bat  (builds + packs the Windows .yak).
+REM   5. Runs pack_mac.bat      (cross-builds + packs the macOS .yak,
+REM                              including patching the Mach-O exec bit
+REM                              that yak.exe drops on Windows).
+REM   6. yak push both .yak files to https://yak.rhino3d.com.
+REM   7. git tag vX.Y.Z and push the tag to origin.
 REM
 REM Requires `yak login` to have run at least once on this machine
 REM (token is cached in %APPDATA%\McNeel\yak.yml). If push fails with
 REM "There was an error retrieving your cached token", run yak login
 REM and retry.
+REM
+REM Requires Go on PATH (or at C:\Program Files\Go\bin\go.exe) for the
+REM darwin/arm64 client cross-compile that pack_mac.bat does.
 
 setlocal EnableDelayedExpansion
 
@@ -40,21 +46,26 @@ set CSPROJ=%RHINO_DIR%\src\BlendkitRhino.csproj
 set MANIFEST_WIN=%RHINO_DIR%\deploy\manifest.yml
 set MANIFEST_MAC=%RHINO_DIR%\deploy\manifest_mac.yml
 set YAK_EXE=C:\Program Files\Rhino 8\System\Yak.exe
-set YAK_FILE=%RHINO_DIR%\build\Release\packages\blenderkit-%NEW_VERSION%-rh8_30-any.yak
+REM csproj is now NuGet-pinned to RhinoCommon 8.0, so yak tags both
+REM builds as rh8_0 (down from rh8_<build-machine-SR>). Filenames lock
+REM in here so we know exactly what to push after pack.
+set YAK_FILE_WIN=%RHINO_DIR%\build\Release\packages\blenderkit-%NEW_VERSION%-rh8_0-any.yak
+set YAK_FILE_MAC=%RHINO_DIR%\build\Release\packages\blenderkit-%NEW_VERSION%-rh8_0-mac.yak
 
 echo.
 echo ==================================================
 echo  BlenderKit for Rhino 8 - release %NEW_VERSION%
 echo ==================================================
-echo  csproj   : %CSPROJ%
-echo  manifests: %MANIFEST_WIN%
-echo             %MANIFEST_MAC%
-echo  yak file : %YAK_FILE%
+echo  csproj    : %CSPROJ%
+echo  manifests : %MANIFEST_WIN%
+echo              %MANIFEST_MAC%
+echo  yak (win) : %YAK_FILE_WIN%
+echo  yak (mac) : %YAK_FILE_MAC%
 echo.
-echo This will commit the version bump, build + pack a .yak, push to
-echo yak.rhino3d.com, and tag v%NEW_VERSION%. The deploy step will
-echo also kill Rhino if it is running so the .rhp can be copied
-echo locally. Cancel now (Ctrl+C) if that's a problem.
+echo This will commit the version bump, build + pack BOTH .yak files
+echo (win + mac), push them to yak.rhino3d.com, and tag v%NEW_VERSION%.
+echo The Windows deploy step kills Rhino if it is running so the .rhp
+echo can be copied locally. Cancel now (Ctrl+C) if that's a problem.
 echo.
 
 set /p CONFIRM=Continue? (y/N):
@@ -96,23 +107,41 @@ git commit -m "release: %NEW_VERSION%"
 if errorlevel 1 ( echo ERROR: git commit failed. & popd >nul & exit /b 4 )
 popd >nul
 
-REM ---- Step 3/5: build + pack via deploy_rhino.bat --------------------
-echo [release] Running deploy (build + pack)...
+REM ---- Step 3/6: build + pack Windows yak via deploy_rhino.bat --------
+echo [release] Running deploy_rhino.bat (Windows build + pack)...
 call "%~dp0deploy_rhino.bat"
 if errorlevel 1 ( echo ERROR: deploy_rhino.bat failed. & exit /b 5 )
 
-if not exist "%YAK_FILE%" (
-    echo ERROR: deploy completed but expected .yak not found:
-    echo   %YAK_FILE%
+if not exist "%YAK_FILE_WIN%" (
+    echo ERROR: deploy completed but expected Windows .yak not found:
+    echo   %YAK_FILE_WIN%
     echo Check deploy output above for clues.
     exit /b 5
 )
 
-REM ---- Step 4/5: yak push ---------------------------------------------
-echo [release] Pushing to yak.rhino3d.com...
-"%YAK_EXE%" push "%YAK_FILE%"
+REM ---- Step 4/6: cross-pack macOS yak via pack_mac.bat ----------------
+REM Does the darwin/arm64 cross-compile + net7.0 .rhp build + yak build
+REM --platform mac + Mach-O exec bit patch. Builds before either yak push
+REM so we don't end up with a "Win-only release" if Mac packing breaks.
+echo [release] Running pack_mac.bat (macOS cross-build + pack)...
+call "%~dp0pack_mac.bat"
+if errorlevel 1 ( echo ERROR: pack_mac.bat failed. & exit /b 5 )
+
+if not exist "%YAK_FILE_MAC%" (
+    echo ERROR: pack_mac completed but expected macOS .yak not found:
+    echo   %YAK_FILE_MAC%
+    echo Check pack output above for clues.
+    exit /b 5
+)
+
+REM ---- Step 5/6: yak push (Windows then macOS) ------------------------
+REM Push order doesn't really matter — yak treats them as independent
+REM artifacts. We push Windows first so a token failure surfaces before
+REM the second push attempt repeats the same error.
+echo [release] Pushing Windows .yak to yak.rhino3d.com...
+"%YAK_EXE%" push "%YAK_FILE_WIN%"
 if errorlevel 1 (
-    echo ERROR: yak push failed.
+    echo ERROR: yak push ^(Windows^) failed.
     echo If the message is "error retrieving your cached token", run:
     echo   "%YAK_EXE%" login
     echo and retry release.bat with the same version (the local commit
@@ -120,7 +149,17 @@ if errorlevel 1 (
     exit /b 6
 )
 
-REM ---- Step 5/5: tag + push tag --------------------------------------
+echo [release] Pushing macOS .yak to yak.rhino3d.com...
+"%YAK_EXE%" push "%YAK_FILE_MAC%"
+if errorlevel 1 (
+    echo ERROR: yak push ^(macOS^) failed.
+    echo Windows yak is already up. To finish the release manually:
+    echo   "%YAK_EXE%" push "%YAK_FILE_MAC%"
+    echo and then re-run the tag step ^(or just `git tag v%NEW_VERSION% ^&^& git push origin v%NEW_VERSION%`^).
+    exit /b 6
+)
+
+REM ---- Step 6/6: tag + push tag --------------------------------------
 echo [release] Tagging v%NEW_VERSION% and pushing to origin...
 pushd "%RHINO_DIR%" >nul
 git tag v%NEW_VERSION%
@@ -132,9 +171,10 @@ popd >nul
 echo.
 echo ==================================================
 echo  Released BlenderKit %NEW_VERSION%.
-echo  - .yak: %YAK_FILE%
-echo  - tag : v%NEW_VERSION% (pushed to origin)
-echo  - live: https://yak.rhino3d.com/ (search "BlenderKit")
+echo  - win .yak: %YAK_FILE_WIN%
+echo  - mac .yak: %YAK_FILE_MAC%
+echo  - tag     : v%NEW_VERSION% (pushed to origin)
+echo  - live    : https://yak.rhino3d.com/ (search "BlenderKit")
 echo ==================================================
 
 exit /b 0
@@ -149,9 +189,12 @@ echo Performs the full release dance:
 echo   1. Refuses to run with a dirty git tree.
 echo   2. Bumps ^<Version^> in BlendkitRhino.csproj and version: in both manifest yml files.
 echo   3. Commits the bump as "release: X.Y.Z".
-echo   4. Runs deploy_rhino.bat (builds + packs a .yak).
-echo   5. yak push the .yak to yak.rhino3d.com.
-echo   6. git tag v^<version^> + push the tag to origin.
+echo   4. Runs deploy_rhino.bat (builds + packs the Windows .yak).
+echo   5. Runs pack_mac.bat     (cross-builds + packs the macOS .yak).
+echo   6. yak push both .yak files to yak.rhino3d.com.
+echo   7. git tag v^<version^> + push the tag to origin.
 echo.
-echo Requires `yak login` to have run at least once on this machine.
+echo Requires `yak login` to have run at least once on this machine,
+echo and Go on PATH (or at C:\Program Files\Go\bin\go.exe) for the
+echo darwin/arm64 client cross-compile.
 exit /b 1
