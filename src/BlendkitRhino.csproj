@@ -49,12 +49,6 @@
   </PropertyGroup>
 
   <!--
-    Reference Rhino DLLs directly from the install. This is more reliable than
-    NuGet for local dev because the DLLs already match the running Rhino
-    exactly. For CI / reproducible builds, switch to the RhinoCommon NuGet
-    package later.
-  -->
-  <!--
     System.Drawing.Common is needed because Panels.RegisterPanel takes a
     System.Drawing.Icon argument. Ship-wise we pass null, but the reference
     still has to resolve at compile time.
@@ -71,55 +65,25 @@
   </ItemGroup>
 
   <!--
-    Rhino DLL references. On Windows we point at the install location.
-    On other platforms we use the user's RHINO_DIR env var (or the
-    RhinoCommon NuGet — TODO once we set up CI).
-  -->
-  <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-    <Reference Include="RhinoCommon">
-      <HintPath>$(ProgramFiles)\Rhino 8\System\RhinoCommon.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Rhino.UI">
-      <HintPath>$(ProgramFiles)\Rhino 8\System\Rhino.UI.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Eto">
-      <HintPath>$(ProgramFiles)\Rhino 8\System\Eto.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-  </ItemGroup>
+    RhinoCommon comes from NuGet pinned at 8.0 (Rhino 8 GA, October 2023).
+    Pinning at 8.0 — instead of pointing at $(ProgramFiles)\Rhino 8\… as
+    we used to — lowers the Yak distribution tag from rh8_<build-machine-SR>
+    down to rh8_0, so the package shows up in the Package Manager for
+    every Rhino 8 user (not just those on the SR we happened to build
+    against). The NuGet ships RhinoCommon.dll, Rhino.UI.dll, and Eto.dll
+    together, so this single reference replaces every previous HintPath ref
+    on both Windows and macOS — no more probing for Rhino install paths,
+    no more dependence on the build machine's Rhino SR.
 
-  <!--
-    macOS Rhino install path. Rhino 8 ships its managed assemblies in
-    Contents/Frameworks/RhCore.framework/Versions/A/Resources/. Older
-    Rhino 7 (and the legacy "Rhinoceros 8.app" bundle name from earlier
-    installers) used Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp/.
-    We probe both layouts and both bundle names; first hit wins. Set
-    the RHINO_DLL_DIR property explicitly to override — useful in CI or
-    when Rhino is installed somewhere non-default.
+    ExcludeAssets=runtime keeps these DLLs OUT of the build output —
+    Rhino's own install ships the canonical copies, and shadowing them
+    with NuGet copies would break loading at runtime. PrivateAssets=all
+    prevents the dependency from leaking into anything that consumes
+    this assembly.
   -->
-  <PropertyGroup Condition="'$(OS)' != 'Windows_NT' and '$(RHINO_DLL_DIR)' == ''">
-    <_RhinoCand1>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources</_RhinoCand1>
-    <_RhinoCand2>/Applications/Rhinoceros 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources</_RhinoCand2>
-    <_RhinoCand3>/Applications/Rhinoceros 8.app/Contents/Resources/ManagedPlugIns/RhinoDLR_Python.rhp</_RhinoCand3>
-    <RHINO_DLL_DIR Condition="Exists('$(_RhinoCand1)/RhinoCommon.dll')">$(_RhinoCand1)</RHINO_DLL_DIR>
-    <RHINO_DLL_DIR Condition="'$(RHINO_DLL_DIR)' == '' and Exists('$(_RhinoCand2)/RhinoCommon.dll')">$(_RhinoCand2)</RHINO_DLL_DIR>
-    <RHINO_DLL_DIR Condition="'$(RHINO_DLL_DIR)' == '' and Exists('$(_RhinoCand3)/RhinoCommon.dll')">$(_RhinoCand3)</RHINO_DLL_DIR>
-  </PropertyGroup>
-
-  <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
-    <Reference Include="RhinoCommon">
-      <HintPath>$(RHINO_DLL_DIR)/RhinoCommon.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Rhino.UI">
-      <HintPath>$(RHINO_DLL_DIR)/Rhino.UI.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="Eto">
-      <HintPath>$(RHINO_DLL_DIR)/Eto.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+  <ItemGroup>
+    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001"
+                      ExcludeAssets="runtime"
+                      PrivateAssets="all" />
   </ItemGroup>
 </Project>
