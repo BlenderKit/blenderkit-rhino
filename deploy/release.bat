@@ -138,14 +138,19 @@ REM ---- Step 5/6: yak push (Windows then macOS) ------------------------
 REM Push order doesn't really matter — yak treats them as independent
 REM artifacts. We push Windows first so a token failure surfaces before
 REM the second push attempt repeats the same error.
+REM cmd parses the body of an if-block at scan time even when the block
+REM is not entered. Bare ( and ) inside echo strings are read as block
+REM delimiters and crash the parser with ". was unexpected at this time."
+REM AFTER the previous step has already run and printed output. Every
+REM ( and ) in echo strings inside an if-block must be escaped as ^( ^).
 echo [release] Pushing Windows .yak to yak.rhino3d.com...
 "%YAK_EXE%" push "%YAK_FILE_WIN%"
 if errorlevel 1 (
     echo ERROR: yak push ^(Windows^) failed.
     echo If the message is "error retrieving your cached token", run:
     echo   "%YAK_EXE%" login
-    echo and retry release.bat with the same version (the local commit
-    echo is already in place; deploy will produce the same .yak).
+    echo and retry release.bat with the same version. The local commit
+    echo is already in place; deploy will produce the same .yak.
     exit /b 6
 )
 
@@ -155,7 +160,7 @@ if errorlevel 1 (
     echo ERROR: yak push ^(macOS^) failed.
     echo Windows yak is already up. To finish the release manually:
     echo   "%YAK_EXE%" push "%YAK_FILE_MAC%"
-    echo and then re-run the tag step ^(or just `git tag v%NEW_VERSION% ^&^& git push origin v%NEW_VERSION%`^).
+    echo Then run: git tag v%NEW_VERSION% ^&^& git push origin v%NEW_VERSION%
     exit /b 6
 )
 
@@ -163,7 +168,7 @@ REM ---- Step 6/6: tag + push tag --------------------------------------
 echo [release] Tagging v%NEW_VERSION% and pushing to origin...
 pushd "%RHINO_DIR%" >nul
 git tag v%NEW_VERSION%
-if errorlevel 1 ( echo WARNING: git tag failed (already exists?). & popd >nul & exit /b 7 )
+if errorlevel 1 ( echo WARNING: git tag failed - tag may already exist. & popd >nul & exit /b 7 )
 git push origin v%NEW_VERSION%
 if errorlevel 1 ( echo WARNING: git push tag failed - tag created locally only. & popd >nul & exit /b 7 )
 popd >nul
