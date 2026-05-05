@@ -98,6 +98,23 @@ namespace Blendkit.Rhino
         // recurring "stuck/missing" bug source and the call site of the
         // mutation is what we always need to diagnose it.
         private string _categorySlugBacking = "";
+        // Categories are remembered per asset type — same pattern as
+        // blenderkit/utils.py:get_search_props() in the Blender add-on,
+        // which returns a separate property block per asset type
+        // (blenderkit_models, blenderkit_mat, blenderkit_HDR, …) so the
+        // user's category choice on MODEL survives a flip to HDR and
+        // back. Our UI shares one widget set across all types so we
+        // back the filter state with a dict instead of N prop blocks.
+        // _categorySlugBacking is the slug for whichever type is
+        // currently selected; the dict is the source of truth for
+        // "what was the slug on type X" while X isn't active.
+        private readonly Dictionary<string, string> _categorySlugByType
+            = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Tracks the asset type the property reflects right now, so the
+        // SelectedIndexChanged handler knows where to stash the outgoing
+        // slug before swapping in the incoming type's. Empty string until
+        // the constructor has restored the initial value.
+        private string _lastSeenAssetTypeForCategory = "";
         private string _categorySlug
         {
             get => _categorySlugBacking;
@@ -224,7 +241,37 @@ namespace Blendkit.Rhino
             _recentQueries.AddRange(Settings.GetStringList("recent_queries"));
             var lastQuery = Settings.GetString("last_query");
             var lastType = Settings.GetString("last_asset_type", "MODEL");
-            _categorySlug = Settings.GetString("last_category_slug");
+            // Per-asset-type categories — see _categorySlugByType comment.
+            // Stored as a small JSON object {"MODEL":"furniture", ...} in
+            // a single setting key. Migrate the legacy single-string
+            // "last_category_slug" into the new dict keyed by lastType
+            // when no per-type map has been written yet.
+            var slugsJson = Settings.GetString("category_slugs_by_type");
+            if (!string.IsNullOrEmpty(slugsJson))
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(slugsJson);
+                    if (parsed != null)
+                    {
+                        foreach (var kv in parsed)
+                            _categorySlugByType[kv.Key.ToUpperInvariant()] = kv.Value ?? "";
+                    }
+                }
+                catch (Exception ex) { BkLog.W("category_slugs_by_type parse: " + ex.Message); }
+            }
+            else
+            {
+                var legacy = Settings.GetString("last_category_slug");
+                if (!string.IsNullOrEmpty(legacy))
+                    _categorySlugByType[(lastType ?? "MODEL").ToUpperInvariant()] = legacy;
+            }
+            // Prime the property + tracking field for the asset type the
+            // panel is about to restore. From here on every type change
+            // routes through SwapCategorySlugForAssetType.
+            _lastSeenAssetTypeForCategory = (lastType ?? "MODEL").ToUpperInvariant();
+            _categorySlugBacking = _categorySlugByType.TryGetValue(
+                _lastSeenAssetTypeForCategory, out var primed) ? (primed ?? "") : "";
 
             _suppressSearchEvents = true;
             BuildUi();
@@ -400,6 +447,10 @@ namespace Blendkit.Rhino
                 // subsequent search.
                 var newType = CurrentAssetType();
                 BkLog.W($"_assetType.SelectedIndexChanged: → {newType} (idx={_assetType.SelectedIndex})");
+                // Stash outgoing type's category, restore incoming type's.
+                // Must run BEFORE RefreshCategoryDropdown so the label
+                // reflects the new type's slug, not the old.
+                SwapCategorySlugForAssetType(newType);
                 RefreshCategoryDropdown();
                 ApplyFilterVisibility();
                 // Resolution dropdown's grey-out depends on asset type +
@@ -1090,6 +1141,38 @@ namespace Blendkit.Rhino
                 // no "self" to scope to otherwise.
                 _commonOwnOnlyRow.Visible = !string.IsNullOrEmpty(_apiKey);
             }
+        }
+
+        /// <summary>
+        /// Swap the active category slug to whatever was last picked for
+        /// the new asset type. Saves the outgoing type's slug into
+        /// <see cref="_categorySlugByType"/> first so flipping back
+        /// restores it. Idempotent / safe when the type didn't actually
+        /// change.
+        ///
+        /// Mirrors the per-asset-type prop block pattern from
+        /// blenderkit/utils.py:get_search_props in the Blender add-on:
+        /// each asset type carries its own filter state, including
+        /// category, so the user's pick on MODEL doesn't bleed into HDR.
+        /// </summary>
+        private void SwapCategorySlugForAssetType(string newType)
+        {
+            var newKey = (newType ?? "MODEL").ToUpperInvariant();
+            if (string.Equals(_lastSeenAssetTypeForCategory, newKey, StringComparison.OrdinalIgnoreCase))
+                return; // not a real transition (programmatic re-set)
+            // Stash outgoing — but only if we have a previous type to
+            // attribute the current slug to. On the very first call (the
+            // construction-time priming below) _lastSeenAssetTypeForCategory
+            // is empty and the slug came in from settings already keyed by
+            // the right type, so there's nothing to stash.
+            if (!string.IsNullOrEmpty(_lastSeenAssetTypeForCategory))
+                _categorySlugByType[_lastSeenAssetTypeForCategory] = _categorySlugBacking;
+            // Restore for incoming type. Bypasses the property setter's
+            // logging because the user didn't actually change anything —
+            // they just switched type — and the verbose log line would
+            // be noise.
+            _categorySlugBacking = _categorySlugByType.TryGetValue(newKey, out var s) ? (s ?? "") : "";
+            _lastSeenAssetTypeForCategory = newKey;
         }
 
         private void RefreshCategoryDropdown()
@@ -3032,7 +3115,16 @@ namespace Blendkit.Rhino
                 }
                 Settings.SetString("last_query", q);
                 Settings.SetString("last_asset_type", at);
-                Settings.SetString("last_category_slug", _categorySlug ?? "");
+                // Persist per-asset-type category map. Update the entry
+                // for the active type then serialize the whole dict;
+                // tiny JSON object so cost is negligible.
+                _categorySlugByType[(at ?? "MODEL").ToUpperInvariant()] = _categorySlug ?? "";
+                try
+                {
+                    var serialized = JsonSerializer.Serialize(_categorySlugByType);
+                    Settings.SetString("category_slugs_by_type", serialized);
+                }
+                catch (Exception ex) { BkLog.W("category_slugs_by_type save: " + ex.Message); }
                 if (!string.IsNullOrWhiteSpace(q))
                 {
                     _recentQueries.Remove(q);
