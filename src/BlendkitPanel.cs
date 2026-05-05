@@ -3037,13 +3037,28 @@ namespace Blendkit.Rhino
                    : !string.IsNullOrEmpty(_pinnedAssetType) ? _pinnedAssetType
                    : CurrentAssetType();
             _pinnedAssetType = null;
-            // Asset-type change invalidates the cached "load more"
-            // pointer (_nextUrl) — that URL was built for the previous
-            // type. Without this, a subsequent scroll-to-load-more
-            // would fetch results for the OLD type using the stale
-            // nextUrl, producing the "still searching old type"
-            // behavior the user reported.
-            if (overrideAssetType != null) _nextUrl = null;
+            // CRITICAL: every fresh search (nextUrl == null) MUST invalidate
+            // the cached load-more pointer. Without this, picking a category,
+            // changing the search box, flipping a filter, etc. starts a new
+            // page-1 fetch but leaves _nextUrl pointing at the previous
+            // search's "next" link — and any OnNeedMore that fires within
+            // the in-flight window (we've seen NeedMore re-fire ~50ms after
+            // a fresh search starts, before the new server response lands)
+            // sends a load-more for the PREVIOUS query, which the grid then
+            // appends in via append=true and the user sees mixed / wrong
+            // results. The exact reproduction was:
+            //
+            //     SEARCH URL: ...+category_subtree:planets...   ← fresh
+            //     SEARCH URL: ...&page=2&...+category_subtree:bed  ← stale!
+            //
+            // Same logic also clears _loadingMore — any in-flight load-more
+            // for the previous query is now obsolete and shouldn't gate a
+            // legitimate NeedMore against the new query later.
+            if (nextUrl == null)
+            {
+                _nextUrl = null;
+                _loadingMore = false;
+            }
             var filters = BuildFilters(at);
             // Show the actual outgoing URL so it's obvious what we're asking
             // the server for. Helps diagnose ordering / category / filter
