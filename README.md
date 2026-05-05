@@ -82,3 +82,27 @@ still expects a pre-built `client.exe`.
 Iterating on pure-Python UI code can be done inside Rhino's
 ScriptEditor with `importlib.reload(module)` to skip the restart for
 small changes.
+
+## Releasing to the Yak package server
+
+One-shot release script:
+
+```cmd
+deploy\release.bat 0.1.2
+```
+
+This refuses to run if the working tree is dirty, then bumps the
+version in `BlendkitRhino.csproj` and both `manifest*.yml` files,
+commits the bump (`release: 0.1.2`), runs `deploy_rhino.bat` to
+build + pack the `.yak`, `yak push`es it to https://yak.rhino3d.com,
+and tags `v0.1.2` in git (pushed to `origin`).
+
+Requires `yak login` to have run at least once (token cached at
+`%APPDATA%\McNeel\yak.yml`). If push fails with "error retrieving
+your cached token", run `yak login` and re-invoke `release.bat`
+with the same version — the local commit is already in place;
+deploy will produce the same `.yak`.
+
+The Rhino kill behaviour from `deploy_rhino.bat` applies — Rhino
+will be closed during the deploy step so the `.rhp` can be copied
+into the local plug-ins folder.
