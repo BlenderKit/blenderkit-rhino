@@ -2153,6 +2153,37 @@ namespace Blendkit.Rhino
         }
 
         /// <summary>
+        /// Same trick as <see cref="WrapCheck"/> but for radio buttons.
+        /// Eto.Wpf overrides RadioButton.TextColor on every layout pass
+        /// (picks up the OS theme); blanking the radio's own text and
+        /// pairing it with an externally-coloured Label dodges that
+        /// completely. Caller passes the radio it wants visible plus the
+        /// label text. Click on the label flips the radio (only when
+        /// it's not already checked, since RadioButton groups don't allow
+        /// "unselecting").
+        /// </summary>
+        private static Control WrapRadio(RadioButton rb, string text)
+        {
+            rb.Text = "";
+            var lbl = new Label
+            {
+                Text = text,
+                TextColor = BkColors.DarkText,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            lbl.MouseDown += (s, e) => { if (rb.Checked != true) rb.Checked = true; };
+            var row = new StackLayout
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                VerticalContentAlignment = VerticalAlignment.Center,
+            };
+            row.Items.Add(rb);
+            row.Items.Add(lbl);
+            return row;
+        }
+
+        /// <summary>
         /// Public entry the test commands call after they re-open an
         /// already-visible panel. Sets the search box + asset type and
         /// runs the search; the existing test-mode auto-download branch in
@@ -3562,12 +3593,40 @@ namespace Blendkit.Rhino
         }
 
         /// <summary>
+        /// Result returned by <see cref="ShowHdrResolutionPicker"/>: the
+        /// chosen resolution string plus three flags for which Render
+        /// environment slots Rhino should bind the HDR to. Null when
+        /// the user cancelled the picker.
+        /// </summary>
+        private struct HdrPickResult
+        {
+            public string Resolution;     // e.g. "resolution_2K"
+            public bool UseBackground;    // 360° dome behind the scene
+            public bool UseReflections;   // sampled by reflective materials
+            public bool UseLighting;      // image-based lighting / skylight
+        }
+
+        // Shared by the picker (writes) and SetEnvironmentFromFile (reads)
+        // so the env-slot choices made at picker time get applied to the
+        // matching downstream env binding. Last-write-wins — the picker
+        // is modal, so users only have one in-flight HDR pick at a time.
+        // Defaults to all true so a non-pick code path (legacy / future
+        // direct-path bypassing the picker) still binds all three slots.
+        private HdrPickResult _lastHdrPick = new HdrPickResult
+        {
+            UseBackground = true, UseReflections = true, UseLighting = true,
+        };
+
+        /// <summary>
         /// Modal "pick the HDR resolution" picker, mirroring the Blender
         /// add-on's per-asset popup (asset_drag_op.py: invoke_resolution=True).
         /// HDRs can be huge — 8K HDR is ~30 MB on disk and a render-killer
         /// on import — so the user wants to pick on every drop, not lean
-        /// on a global preset. Returns the wire-format resolution string
-        /// (e.g. "resolution_2K") or null if the user cancelled.
+        /// on a global preset. Returns the resolution string (e.g.
+        /// "resolution_2K") or null if the user cancelled. Side-effects
+        /// <see cref="_lastHdrPick"/> with the env-slot checkbox state
+        /// so SetEnvironmentFromFile picks them up after the download
+        /// completes.
         /// </summary>
         private string ShowHdrResolutionPicker(JsonElement hit)
         {
@@ -3587,18 +3646,18 @@ namespace Blendkit.Rhino
 
             var sizes = new (string Label, int Pixels, string WireValue)[]
             {
-                ("0.5K (512px)",  512,  "resolution_0_5K"),
-                ("1K  (1024px)",  1024, "resolution_1K"),
-                ("2K  (2048px)",  2048, "resolution_2K"),
-                ("4K  (4096px)",  4096, "resolution_4K"),
-                ("8K  (8192px)",  8192, "resolution_8K"),
-                ("Original",       0,   "ORIGINAL"),
+                ("0.5K  (512px)",  512,  "resolution_0_5K"),
+                ("1K    (1024px)", 1024, "resolution_1K"),
+                ("2K    (2048px)", 2048, "resolution_2K"),
+                ("4K    (4096px)", 4096, "resolution_4K"),
+                ("8K    (8192px)", 8192, "resolution_8K"),
+                ("Original",        0,   "ORIGINAL"),
             };
 
             // Default: the user's panel-level Resolution dropdown choice,
             // mapped through to the matching radio. Falls back to 1K.
             var preset = ResolveDownloadResolution("hdr"); // never the strip override
-            var selectedRow = new RadioButton[sizes.Length];
+            var rbs = new RadioButton[sizes.Length];
             RadioButton first = null;
             var stack = new StackLayout
             {
@@ -3612,17 +3671,47 @@ namespace Blendkit.Rhino
                 // Skip variants larger than the asset actually has.
                 if (maxResolution > 0 && s.Pixels > maxResolution && s.WireValue != "ORIGINAL")
                     continue;
+                // RadioButton constructor: first one creates a new group;
+                // subsequent ones pass the first as the "controller" so
+                // they share group state.
                 var rb = first == null
-                    ? new RadioButton { Text = s.Label, TextColor = BkColors.DarkText }
-                    : new RadioButton(first) { Text = s.Label, TextColor = BkColors.DarkText };
+                    ? new RadioButton()
+                    : new RadioButton(first);
                 if (first == null) first = rb;
                 if (s.WireValue == preset) rb.Checked = true;
-                selectedRow[i] = rb;
-                stack.Items.Add(rb);
+                rbs[i] = rb;
+                stack.Items.Add(WrapRadio(rb, s.Label));
             }
             // Default-pick the first if none matched the preset.
-            if (first != null && !Array.Exists(selectedRow, r => r != null && r.Checked))
+            if (first != null && !Array.Exists(rbs, r => r != null && r.Checked))
                 first.Checked = true;
+
+            // Env-slot checkboxes — Rhino's RDK exposes three independent
+            // assignments (Background = visible dome, Reflection = sampled
+            // by reflective materials, Skylighting = image-based lighting).
+            // Default ON for all three to match the user's expected
+            // "drag HDR -> it just works for everything" behaviour, but
+            // the user can untick any of them to leave that slot alone.
+            var cbBg = new CheckBox { Checked = _lastHdrPick.UseBackground };
+            var cbRefl = new CheckBox { Checked = _lastHdrPick.UseReflections };
+            var cbLight = new CheckBox { Checked = _lastHdrPick.UseLighting };
+            var slotsLabel = new Label
+            {
+                Text = "Use as render environment for:",
+                TextColor = BkColors.DarkText,
+            };
+            var slotsStack = new StackLayout
+            {
+                Orientation = Orientation.Vertical,
+                Spacing = 4,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items =
+                {
+                    WrapCheck(cbBg,    "Background"),
+                    WrapCheck(cbRefl,  "Reflections"),
+                    WrapCheck(cbLight, "Lighting"),
+                },
+            };
 
             string picked = null;
             var okBtn = new Button { Text = "Download" };
@@ -3630,12 +3719,19 @@ namespace Blendkit.Rhino
             {
                 for (int i = 0; i < sizes.Length; i++)
                 {
-                    if (selectedRow[i] != null && selectedRow[i].Checked == true)
+                    if (rbs[i] != null && rbs[i].Checked == true)
                     {
                         picked = sizes[i].WireValue;
                         break;
                     }
                 }
+                _lastHdrPick = new HdrPickResult
+                {
+                    Resolution = picked,
+                    UseBackground = cbBg.Checked == true,
+                    UseReflections = cbRefl.Checked == true,
+                    UseLighting = cbLight.Checked == true,
+                };
                 dlg.Close();
             };
             var cancelBtn = new Button { Text = "Cancel" };
@@ -3666,6 +3762,8 @@ namespace Blendkit.Rhino
                         TextColor = BkColors.DarkText,
                     },
                     stack,
+                    slotsLabel,
+                    slotsStack,
                     btnRow,
                 },
             };
@@ -5091,16 +5189,43 @@ namespace Blendkit.Rhino
                 env.Name = Path.GetFileNameWithoutExtension(path);
                 env.EndChange();
 
-                // Step 3: register with the doc and make it the active
-                // background. RenderSettings is value-like — re-assign
-                // the modified copy back to the doc to commit.
+                // Step 3: register with the doc and assign it to whichever
+                // env slots the user enabled in the picker. Rhino's RDK
+                // exposes three independent slots — Background (visible
+                // dome), Reflection (sampled by reflective materials),
+                // Skylighting (image-based lighting). Default state for a
+                // direct-path call (no picker) is all-true; the picker
+                // last-write-wins into _lastHdrPick.
                 doc.RenderEnvironments.Add(env);
                 var rs = doc.RenderSettings;
-                rs.SetRenderEnvironment(global::Rhino.Render.RenderSettings.EnvironmentUsage.Background, env);
-                rs.BackgroundStyle = global::Rhino.Display.BackgroundStyle.Environment;
+                var pick = _lastHdrPick;
+                var assigned = new System.Collections.Generic.List<string>();
+                if (pick.UseBackground)
+                {
+                    rs.SetRenderEnvironment(global::Rhino.Render.RenderSettings.EnvironmentUsage.Background, env);
+                    rs.BackgroundStyle = global::Rhino.Display.BackgroundStyle.Environment;
+                    assigned.Add("background");
+                }
+                if (pick.UseReflections)
+                {
+                    rs.SetRenderEnvironment(global::Rhino.Render.RenderSettings.EnvironmentUsage.Reflection, env);
+                    assigned.Add("reflections");
+                }
+                if (pick.UseLighting)
+                {
+                    rs.SetRenderEnvironment(global::Rhino.Render.RenderSettings.EnvironmentUsage.Skylighting, env);
+                    assigned.Add("lighting");
+                }
                 doc.RenderSettings = rs;
                 doc.Views.Redraw();
-                SetStatus("Set as render background: " + Path.GetFileName(path));
+                if (assigned.Count == 0)
+                {
+                    SetStatus("HDR added to doc but no env slots selected: " + Path.GetFileName(path));
+                }
+                else
+                {
+                    SetStatus($"HDR set as {string.Join(" + ", assigned)}: " + Path.GetFileName(path));
+                }
                 return;
             }
             catch (Exception ex)
