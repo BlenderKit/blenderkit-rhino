@@ -36,7 +36,7 @@
     <AssemblyTitle>BlenderKit</AssemblyTitle>
     <Product>BlenderKit</Product>
     <Description>BlenderKit asset browser — Rhino 8 port.</Description>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>BlenderKit</Authors>
     <Company>BlenderKit</Company>
     <!--

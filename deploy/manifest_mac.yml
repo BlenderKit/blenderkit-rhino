@@ -7,16 +7,21 @@
 # Yak builds one .yak per OS — `yak build` in a dir containing this
 # file produces blenderkit-<version>-rh8_30-mac.yak.
 name: BlenderKit
-version: 0.1.0
+version: 0.1.1
 authors:
   - BlenderKit
-description: >
+description: |
+  ⚠️ EXPERIMENTAL ALPHA — expect bugs, incomplete features, and
+  breaking changes between releases. Please report any issues at
+  https://github.com/BlenderKit/blenderkit-rhino/issues so we can
+  track and fix them.
+
   BlenderKit asset browser for Rhino 8 (macOS) — drag-drop access to
   thousands of free and paid 3D models, materials, and HDR
   environments. Mirrors the Blender BlenderKit add-on: per-asset-type
   filters, login, bookmarks, ratings, and an in-Rhino preview before
   download.
-url: https://www.blenderkit.com
+url: https://github.com/BlenderKit/blenderkit-rhino
 keywords:
   - blenderkit
   - assets

@@ -10,15 +10,23 @@
 # BlenderKitRhino.csproj <Version>). Yak refuses re-uploads of an
 # existing version; bump on every push.
 name: BlenderKit
-version: 0.1.0
+version: 0.1.1
 authors:
   - BlenderKit
-description: >
+# Literal block (|) preserves newlines so the alpha warning reads as a
+# distinct paragraph in the Package Manager listing instead of getting
+# folded into the prose body that follows.
+description: |
+  ⚠️ EXPERIMENTAL ALPHA — expect bugs, incomplete features, and
+  breaking changes between releases. Please report any issues at
+  https://github.com/BlenderKit/blenderkit-rhino/issues so we can
+  track and fix them.
+
   BlenderKit asset browser for Rhino 8 — drag-drop access to thousands
   of free and paid 3D models, materials, and HDR environments. Mirrors
   the Blender BlenderKit add-on: per-asset-type filters, login,
   bookmarks, ratings, and an in-Rhino preview before download.
-url: https://www.blenderkit.com
+url: https://github.com/BlenderKit/blenderkit-rhino
 # Keywords surface in the Package Manager search box and on
 # yak.rhino3d.com. Keep them lower-case, single-word where possible.
 keywords:
