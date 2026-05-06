@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -258,12 +259,21 @@ namespace Blendkit.Rhino
                 _clientProcess = null;
             }
 
-            // Step 2: spawn our own. On Windows we ship `client.exe`,
-            // on macOS / Linux a plain `client` binary (no extension).
-            // Probe both so the same plug-in dir works across OSes.
+            // Step 2: spawn our own. We ship the Go client under the same
+            // descriptive filename the BlenderKit Blender add-on uses
+            // (`blenderkit-client-<os>-<arch>(.exe)`, where os is one of
+            // {windows,macos,linux} and arch is one of {x86_64,arm64}).
+            // Mirrors `decide_client_binary_name()` in the add-on's
+            // client_lib.py so a binary built with the add-on's dev.py
+            // drops in unchanged.
+            //
+            // The pre-rename short names (`client.exe` on Windows, `client`
+            // elsewhere) stay in the probe order as a fallback so the .rhp
+            // shipped in the 0.1.2 yak — which still uses the short name —
+            // keeps working after a plug-in upgrade-in-place.
             var asmDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
             string clientExe = null;
-            foreach (var name in new[] { "client.exe", "client" })
+            foreach (var name in CandidateClientBinaryNames())
             {
                 var p = Path.Combine(asmDir, "client", name);
                 if (File.Exists(p)) { clientExe = p; break; }
@@ -335,6 +345,53 @@ namespace Blendkit.Rhino
             if (_clientProcess == null || _clientProcess.HasExited) return;
             try { _clientProcess.Kill(); _clientProcess.WaitForExit(3000); }
             catch (Exception ex) { RhinoApp.WriteLine($"[BlenderKit] Kill failed: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Filenames to try when locating the Go client binary inside the
+        /// shipped <c>client/</c> directory. First entry matching wins.
+        ///
+        /// The first candidate is the addon-style descriptive name
+        /// (<c>blenderkit-client-{os}-{arch}(.exe)</c>) — same convention
+        /// as <c>decide_client_binary_name</c> in the Blender add-on's
+        /// client_lib.py. Falling back to <c>client.exe</c>/<c>client</c>
+        /// keeps the plug-in compatible with older yaks (0.1.2 and earlier)
+        /// that shipped the binary under the short name.
+        ///
+        /// arch is read from <see cref="RuntimeInformation.OSArchitecture"/>
+        /// rather than process architecture so a 32-bit Rhino on a 64-bit OS
+        /// would still pick the right binary — though in practice Rhino 8
+        /// is 64-bit only.
+        /// </summary>
+        private static IEnumerable<string> CandidateClientBinaryNames()
+        {
+            string os;
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) os = "windows";
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) os = "macos";
+            else os = "linux";
+
+            // The add-on aligns Windows' "amd64" and Linux' "aarch64" onto
+            // x86_64/arm64 — replicate that here so the filenames match.
+            string arch = RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64   => "x86_64",
+                Architecture.Arm64 => "arm64",
+                _                  => "x86_64",  // best-guess fallback
+            };
+
+            string ext = (os == "windows") ? ".exe" : "";
+            yield return $"blenderkit-client-{os}-{arch}{ext}";
+
+            // Cross-arch fallback: a Rosetta-running Intel Rhino on Apple
+            // Silicon, or vice versa. Cheap to probe, big "it actually
+            // works" win when the user installed the wrong-arch yak.
+            string altArch = arch == "x86_64" ? "arm64" : "x86_64";
+            yield return $"blenderkit-client-{os}-{altArch}{ext}";
+
+            // Pre-rename short names — kept for the 0.1.2 yak (and any
+            // local dev workflow that still produces `client.exe` from a
+            // plain `go build` rather than the addon's dev.py).
+            yield return os == "windows" ? "client.exe" : "client";
         }
     }
 }

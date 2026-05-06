@@ -73,30 +73,71 @@ set STAGING=%RHINO_DIR%\build\Release-mac-pack
 set RHP_OUT=%RHINO_DIR%\build\Release-mac
 set PKG_OUT=%RHINO_DIR%\build\Release\packages
 
+REM Match the Blender add-on's client naming (decide_client_binary_name
+REM in client_lib.py + dev.py). os = {windows,macos,linux}, arch =
+REM {x86_64,arm64}. The Rhino plug-in's runtime probe in
+REM BlendkitPlugIn.cs:CandidateClientBinaryNames() picks this up first.
+set CLIENT_BIN_NAME=blenderkit-client-macos-arm64
+
+REM Read the Go client's own version (separate from the plug-in's
+REM AssemblyVersion) from CLIENT_DIR\VERSION. The add-on's dev.py
+REM passes this via -ldflags so `--version` reflects the actual
+REM client build, not just the host's plug-in version.
+set CLIENT_VERSION=
+for /f "usebackq delims=" %%V in ("%CLIENT_DIR%\VERSION") do (
+    if not defined CLIENT_VERSION set CLIENT_VERSION=%%V
+)
+if not defined CLIENT_VERSION (
+    echo WARNING: could not read CLIENT_DIR\VERSION ^(%CLIENT_DIR%\VERSION^).
+    echo          Building without -ldflags client version embed.
+)
+
 echo.
 echo ==================================================
 echo  BlenderKit for Rhino 8 - cross-pack macOS .yak
 echo ==================================================
-echo  rhino dir : %RHINO_DIR%
-echo  client    : %CLIENT_DIR%
-echo  go        : %GO_EXE%
-echo  staging   : %STAGING%
+echo  rhino dir   : %RHINO_DIR%
+echo  client src  : %CLIENT_DIR%
+echo  client ver  : %CLIENT_VERSION%
+echo  client name : %CLIENT_BIN_NAME%
+echo  go          : %GO_EXE%
+echo  staging     : %STAGING%
 echo.
 
 REM ---- 1) Cross-compile Go client (darwin/arm64) -----------------------
+REM Naming + flags mirror the BlenderKit add-on's dev.py (one-to-one),
+REM so a binary built by `blenderkit_client_build` from there drops in
+REM unchanged: GOOS/GOARCH set the target, CGO_ENABLED=0 forces a
+REM static build, -ldflags embeds the client version, and the output
+REM filename is `blenderkit-client-macos-arm64`.
+REM
 REM arm64 covers Apple Silicon Macs natively; Intel Macs run it under
 REM Rosetta 2 — fine for an HTTP proxy. Universal binary would need
 REM `lipo`, which is Mac-only.
-echo [pack_mac] Cross-compiling Go client for darwin/arm64...
+REM Wipe the whole staging dir up-front. Re-using a stale staging dir
+REM is how we ended up with both `client/client` (from an earlier short-
+REM name run) and `client/blenderkit-client-macos-arm64` (from a later
+REM run) ending up in the same .yak — yak.exe just zips whatever it
+REM finds. A clean staging dir guarantees the .yak's contents match
+REM exactly what this script wrote.
+if exist "%STAGING%" rmdir /S /Q "%STAGING%"
+
+echo [pack_mac] Cross-compiling Go client (darwin/arm64) → %CLIENT_BIN_NAME%...
 if not exist "%STAGING%\client" mkdir "%STAGING%\client"
 pushd "%CLIENT_DIR%" >nul
 set GOOS=darwin
 set GOARCH=arm64
+set CGO_ENABLED=0
 set GOTOOLCHAIN=auto
-"%GO_EXE%" build -o "%STAGING%\client\client" .
+if defined CLIENT_VERSION (
+    "%GO_EXE%" build -ldflags "-X main.ClientVersion=%CLIENT_VERSION%" -o "%STAGING%\client\%CLIENT_BIN_NAME%" .
+) else (
+    "%GO_EXE%" build -o "%STAGING%\client\%CLIENT_BIN_NAME%" .
+)
 set GO_RC=%ERRORLEVEL%
 set GOOS=
 set GOARCH=
+set CGO_ENABLED=
 set GOTOOLCHAIN=
 popd >nul
 if not "%GO_RC%"=="0" (
@@ -162,14 +203,14 @@ if not defined MAC_YAK (
     exit /b 6
 )
 
-REM ---- 5) Patch external_attr on client/client to 0o100755 -------------
+REM ---- 5) Patch external_attr on the client binary to 0o100755 --------
 REM yak.exe on Windows leaves ExternalAttributes at 0 for every entry,
 REM which on Mac extract translates to no executable bit. The Mach-O
 REM client binary needs +x or Rhino can't spawn it. Fix in-place via
 REM .NET ZipArchive's Update mode — sets the upper 16 bits to 0o100755
 REM (regular file, rwxr-xr-x), which standard zip extractors honour.
-echo [pack_mac] Patching exec bit on client/client...
-powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression; Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::Open('%MAC_YAK%',[System.IO.Compression.ZipArchiveMode]::Update); $found=$false; foreach ($e in $z.Entries) { if ($e.FullName -eq 'client/client') { $e.ExternalAttributes = 0x81ED0000; $found=$true } }; $z.Dispose(); if (-not $found) { Write-Error 'client/client entry not found in yak'; exit 1 }"
+echo [pack_mac] Patching exec bit on client/%CLIENT_BIN_NAME%...
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression; Add-Type -AssemblyName System.IO.Compression.FileSystem; $z=[System.IO.Compression.ZipFile]::Open('%MAC_YAK%',[System.IO.Compression.ZipArchiveMode]::Update); $found=$false; foreach ($e in $z.Entries) { if ($e.FullName -eq 'client/%CLIENT_BIN_NAME%') { $e.ExternalAttributes = 0x81ED0000; $found=$true } }; $z.Dispose(); if (-not $found) { Write-Error 'client/%CLIENT_BIN_NAME% entry not found in yak'; exit 1 }"
 if errorlevel 1 (
     echo ERROR: failed to patch exec bit.
     exit /b 7
