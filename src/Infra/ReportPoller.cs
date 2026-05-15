@@ -17,15 +17,20 @@ namespace Blendkit.Rhino.Infra
     {
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly int _appId;
-        private readonly string _apiKey;
+        // Func, not string. The panel rotates _apiKey on token_refresh
+        // (handled in HandleTokenRefreshTask) and we want each /report
+        // POST to carry whatever the current key is, not whichever value
+        // was in scope when the poller was constructed at panel-load
+        // time. Cheap to call — just a field read on the panel.
+        private readonly Func<string> _apiKeyProvider;
         private readonly string _addonVersion;
         private readonly Action<JsonElement> _onTask;
         private Task _task;
 
-        public ReportPoller(int appId, string apiKey, string addonVersion, Action<JsonElement> onTask)
+        public ReportPoller(int appId, Func<string> apiKeyProvider, string addonVersion, Action<JsonElement> onTask)
         {
             _appId = appId;
-            _apiKey = apiKey ?? "";
+            _apiKeyProvider = apiKeyProvider ?? (() => "");
             _addonVersion = addonVersion;
             _onTask = onTask;
         }
@@ -66,7 +71,7 @@ namespace Blendkit.Rhino.Infra
                     var payload = new
                     {
                         app_id = _appId,
-                        api_key = _apiKey,
+                        api_key = _apiKeyProvider() ?? "",
                         addon_version = _addonVersion,
                         // See SearchService comment — empty blender_version
                         // crashes the Go client's thumbnail parser.

@@ -224,7 +224,10 @@ namespace Blendkit.Rhino
         {
             ActiveInstance = this;
             // Restore saved api_key from prior session, if any.
-            var (ak, _) = AuthService.LoadTokens();
+            // expires_at is consumed by the proactive refresh kicked off
+            // below; refresh_token isn't needed here — AuthService reads
+            // it back from disk itself on the refresh path.
+            var (ak, _, _) = AuthService.LoadTokens();
             _apiKey = ak;
             // Restore last-session search context: query, asset type, category.
             // Filter checkboxes are deliberately NOT restored so the user
@@ -954,7 +957,13 @@ namespace Blendkit.Rhino
             if (!string.IsNullOrEmpty(_apiKey))
             {
                 _apiKey = "";
-                AuthService.SaveTokens("", "");
+                // Fire-and-forget the server-side revoke. LogoutAsync
+                // clears local creds synchronously before the network
+                // call, so the UI state set below already reflects the
+                // logged-out reality even if the revoke hangs on a slow
+                // connection. Mirrors bkit_oauth.logout → oauth2_logout
+                // in the Blender addon.
+                _ = AuthService.LogoutAsync();
                 _profileLabel.Text = "Not logged in.";
                 _loginBtn.Text = "Login";
                 _notifBtn.Visible = false;
@@ -988,11 +997,23 @@ namespace Blendkit.Rhino
         {
             _poller = new ReportPoller(
                 appId: Process.GetCurrentProcess().Id,
-                apiKey: _apiKey,
+                // Lambda — not _apiKey — so HandleTokenRefreshTask's
+                // in-place rotation gets picked up by the very next
+                // poll without restarting the poller.
+                apiKeyProvider: () => _apiKey,
                 addonVersion: SearchService.AddonVersion,
                 onTask: HandleTask
             );
             _poller.Start();
+
+            // Proactive token refresh: if the on-disk token is within
+            // RefreshReserveSeconds (3 days) of expiry, fire a refresh
+            // now so the first search doesn't hit "Invalid token." and
+            // bounce through the reactive recovery path. Fire-and-forget
+            // — the resulting `token_refresh` task lands on the dispatch
+            // we just started polling. Mirrors the addon's
+            // on_startup_client_online_timer → ensure_token_refresh.
+            _ = AuthService.EnsureTokenRefreshAsync();
         }
 
         // (Label, value to send) pairs. Empty value = "no filter".
@@ -4636,6 +4657,15 @@ namespace Blendkit.Rhino
             if (type != "client_status")
                 BkLog.W($"task type={type} status={status} id={idShort}");
 
+            // Top-of-dispatcher reactive token refresh. Any task that
+            // failed with "Invalid token." (case-insensitive) triggers a
+            // single refresh attempt — see MaybeRefreshOnInvalidToken
+            // for the throttle. Done before the per-type routing below
+            // so search errors, download errors, profile errors all flow
+            // through the same recovery path. Mirrors the addon's
+            // `task_error_overdrive` called at the top of `handle_task`.
+            if (status == "error") MaybeRefreshOnInvalidToken(task);
+
             if (type == "search" && taskId == _pendingSearchId)
                 HandleSearchTask(status, task);
             else if (type == "asset_download")
@@ -4649,6 +4679,8 @@ namespace Blendkit.Rhino
                 HandleThumbnailTask(task);
             else if (type == "login" && status == "finished")
                 HandleLoginTask(task);
+            else if (type == "token_refresh" && status == "finished")
+                HandleTokenRefreshTask(task);
             else if (type == "categories_update" && status == "finished")
                 HandleCategoriesTask(task);
             else if (type == "run_blender_script")
@@ -4879,8 +4911,17 @@ namespace Blendkit.Rhino
             var ak = AuthService.ExtractAccessToken(result);
             var rk = AuthService.ExtractRefreshToken(result);
             if (string.IsNullOrEmpty(ak)) { SetStatus("Login finished but no access_token in result."); return; }
+            // Compute the absolute expiry (Unix seconds) up-front so
+            // NeedsRefresh can be a pure clock check later. expires_in
+            // arrives as "seconds from now"; 0 means the server didn't
+            // tell us, which we tolerate by skipping proactive refresh
+            // (the reactive 401 path still recovers if needed).
+            var expiresIn = AuthService.ExtractExpiresIn(result);
+            var expiresAt = expiresIn > 0
+                ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expiresIn
+                : 0L;
             _apiKey = ak;
-            AuthService.SaveTokens(ak, rk);
+            AuthService.SaveTokens(ak, rk, expiresAt);
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
                 _profileLabel.Text = "Logged in.";
@@ -4895,6 +4936,83 @@ namespace Blendkit.Rhino
                 OnSearch();
             }));
             SetStatus("Logged in successfully.");
+        }
+
+        /// <summary>
+        /// `token_refresh` task — emitted by the Go client when our
+        /// /refresh_token call succeeds. Result payload is shaped the
+        /// same as a `login` result (access_token + refresh_token +
+        /// expires_in), so we persist it the same way. No UI fanfare:
+        /// the user is already logged in, we're just rotating creds.
+        ///
+        /// Subsequent /report polls automatically pick up the new
+        /// _apiKey because ReportPoller reads it through a Func<string>
+        /// rather than a captured constructor argument — set up in
+        /// StartPoller below.
+        ///
+        /// Mirrors bkit_oauth.handle_token_refresh_task in the addon.
+        /// </summary>
+        private void HandleTokenRefreshTask(JsonElement task)
+        {
+            if (!task.TryGetProperty("result", out var result)) return;
+            var ak = AuthService.ExtractAccessToken(result);
+            var rk = AuthService.ExtractRefreshToken(result);
+            if (string.IsNullOrEmpty(ak))
+            {
+                BkLog.W("HandleTokenRefreshTask: result missing access_token — ignoring");
+                return;
+            }
+            var expiresIn = AuthService.ExtractExpiresIn(result);
+            var expiresAt = expiresIn > 0
+                ? DateTimeOffset.UtcNow.ToUnixTimeSeconds() + expiresIn
+                : 0L;
+            _apiKey = ak;
+            AuthService.SaveTokens(ak, rk, expiresAt);
+            BkLog.W($"HandleTokenRefreshTask: rotated api_key (expires_in={expiresIn}s)");
+        }
+
+        /// <summary>
+        /// Reactive recovery for an "Invalid token." error from any task.
+        /// Mirrors bkit_oauth's timer.task_error_overdrive: if we still
+        /// have a refresh token, kick off a refresh and let the resulting
+        /// `token_refresh` task fix things on the next poll. Otherwise
+        /// clear creds locally — the user has to log in again.
+        ///
+        /// Throttle: don't fire more than once every 30 seconds, since a
+        /// burst of in-flight requests will all 401 simultaneously and
+        /// each would otherwise trigger its own refresh.
+        /// </summary>
+        private DateTime _lastTokenRefreshAttempt = DateTime.MinValue;
+        private void MaybeRefreshOnInvalidToken(JsonElement task)
+        {
+            if (string.IsNullOrEmpty(_apiKey)) return;
+            if (!task.TryGetProperty("message", out var m)) return;
+            var msg = m.GetString() ?? "";
+            if (msg.IndexOf("Invalid token", StringComparison.OrdinalIgnoreCase) < 0) return;
+
+            var now = DateTime.UtcNow;
+            if ((now - _lastTokenRefreshAttempt).TotalSeconds < 30) return;
+            _lastTokenRefreshAttempt = now;
+
+            var (_, rk, _) = AuthService.LoadTokens();
+            if (string.IsNullOrEmpty(rk))
+            {
+                // No refresh token (manually pasted permanent key, or the
+                // refresh token also lapsed). Clear local state so the
+                // panel reflects the logged-out reality.
+                BkLog.W("Invalid token + no refresh_token → clearing local creds");
+                _apiKey = "";
+                AuthService.SaveTokens("", "", 0);
+                RhinoApp.InvokeOnUiThread((Action)(() =>
+                {
+                    _profileLabel.Text = "Not logged in.";
+                    _loginBtn.Text = "Login";
+                    SetStatus("Session expired — please log in again.");
+                }));
+                return;
+            }
+            BkLog.W("Invalid token + refresh_token present → kicking off refresh");
+            _ = AuthService.RefreshTokenAsync(rk, _apiKey);
         }
 
         private void HandleThumbnailTask(JsonElement task)

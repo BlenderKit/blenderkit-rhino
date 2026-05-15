@@ -61,13 +61,30 @@ namespace Blendkit.Rhino.Infra
             }
         }
 
-        public static async Task<string> PostJsonAsync(string path, object payload, CancellationToken ct = default)
+        public static Task<string> PostJsonAsync(string path, object payload, CancellationToken ct = default)
+            => SendJsonAsync(HttpMethod.Post, path, payload, ct);
+
+        /// <summary>
+        /// JSON body over any HTTP verb. Same exception semantics as
+        /// <see cref="PostJsonAsync"/>: drops the cached port + re-throws
+        /// on local-connect failure so the report loop can re-discover.
+        ///
+        /// We need the verb-agnostic form because the BlenderKit Go
+        /// client's <c>/refresh_token</c> and <c>/oauth2/logout</c>
+        /// endpoints both take JSON on a GET (matches the addon's
+        /// <c>session.get(url, json=data)</c> calls in client_lib.py;
+        /// non-standard but established protocol contract).
+        /// </summary>
+        public static async Task<string> SendJsonAsync(HttpMethod method, string path, object payload, CancellationToken ct = default)
         {
             var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var req = new HttpRequestMessage(method, BaseUrl + path)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            };
             try
             {
-                var resp = await Http.PostAsync(BaseUrl + path, content, ct);
+                var resp = await Http.SendAsync(req, ct);
                 resp.EnsureSuccessStatusCode();
                 return await resp.Content.ReadAsStringAsync();
             }
