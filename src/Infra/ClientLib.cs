@@ -42,30 +42,7 @@ namespace Blendkit.Rhino.Infra
                     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     cts.CancelAfter(TimeSpan.FromMilliseconds(500));
                     var resp = await Http.GetAsync($"http://127.0.0.1:{port}/", cts.Token);
-                    if (!resp.IsSuccessStatusCode) continue;
-
-                    // Capability check: a Blender add-on bundle ships its
-                    // own client.exe and binds 62485 the moment Blender
-                    // launches. If that client is older than v1.9.0 it
-                    // has no /run_blender_script route — Rhino's panel
-                    // would then 404 every convert request even though
-                    // search/login look healthy. Refuse such a client
-                    // and let the loop try the next port (where Rhino's
-                    // plug-in-spawned client would have landed).
-                    //
-                    // 404 = route not registered → incompatible client.
-                    // 400 = route exists, complains about empty body → OK.
-                    // Anything else (timeout, 5xx, ...) → also try next.
-                    using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    probeCts.CancelAfter(TimeSpan.FromMilliseconds(500));
-                    try
-                    {
-                        var probeBody = new StringContent("{}", Encoding.UTF8, "application/json");
-                        var probe = await Http.PostAsync($"http://127.0.0.1:{port}/run_blender_script", probeBody, probeCts.Token);
-                        if (probe.StatusCode == System.Net.HttpStatusCode.NotFound) continue;
-                    }
-                    catch { continue; }
-
+                    // Client returns something (maybe 404) but it answered.
                     ActivePort = port;
                     return port;
                 }
