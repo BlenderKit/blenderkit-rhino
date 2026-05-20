@@ -3982,13 +3982,19 @@ namespace Blendkit.Rhino
         {
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
-                try
+                // RunImportSerialized guards against message-pump
+                // re-entrancy interleaving two drops — see the long
+                // comment above _importInProgress.
+                RunImportSerialized(() =>
                 {
-                    var doc = global::Rhino.RhinoDoc.ActiveDoc;
-                    WithUndo(doc, "BlenderKit: Drop asset at point", () =>
-                    ImportAtPointCore(doc, path, pt, normal, spinRadians));
-                }
-                catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
+                    try
+                    {
+                        var doc = global::Rhino.RhinoDoc.ActiveDoc;
+                        WithUndo(doc, "BlenderKit: Drop asset at point", () =>
+                            ImportAtPointCore(doc, path, pt, normal, spinRadians));
+                    }
+                    catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
+                });
             }));
         }
 
@@ -3996,16 +4002,15 @@ namespace Blendkit.Rhino
             global::Rhino.Geometry.Point3d pt, global::Rhino.Geometry.Vector3d normal,
             double spinRadians)
         {
-            // Compose the placement transform once — both the
-            // cache fast-path and the first-import blockify
-            // pipeline use the same chain.
+            // Placement transform — orient Z-axis to the surface normal,
+            // spin around it for the user's mousewheel rotation, then
+            // translate to the picked point. Applied to each imported
+            // object via GroupImported (groups don't have a carrier
+            // object that would hold a single instance transform).
             if (normal.IsZero) normal = global::Rhino.Geometry.Vector3d.ZAxis;
             var rot = global::Rhino.Geometry.Transform.Rotation(
                 global::Rhino.Geometry.Vector3d.ZAxis, normal,
                 global::Rhino.Geometry.Point3d.Origin);
-            // User's mousewheel spin around the surface normal —
-            // applied at world origin so the rest of the chain
-            // (translation last) lands the asset where they aimed.
             var spin = global::Rhino.Geometry.Transform.Rotation(
                 spinRadians, normal,
                 global::Rhino.Geometry.Point3d.Origin);
@@ -4013,53 +4018,20 @@ namespace Blendkit.Rhino
                 pt - global::Rhino.Geometry.Point3d.Origin);
             var xform = trans * spin * rot;
 
-            // Fast path: a previous drop of the same asset_base_id
-            // already created an InstanceDefinition in this doc with
-            // the SAME post-process variant (full / lite / lite_dec).
-            // The variant is part of the cache key so toggling Strip
-            // Materials mid-session re-imports rather than re-instancing
-            // the previously-stripped block.
             string assetBaseId = _grid_static_currentAssetBaseId;
-            string cacheKey = CacheKeyForBaseId(assetBaseId);
-            int cachedIdx = LookupCachedInstDef(doc, cacheKey);
-            if (cachedIdx >= 0)
-            {
-                var iid = doc.Objects.AddInstanceObject(cachedIdx, xform);
-                if (iid != Guid.Empty)
-                {
-                    StampBlenderKitMetadata(doc, new[] { iid }, path);
-                    doc.Views.Redraw();
-                    BkLog.W($"ImportAtPoint: reused cached InstDef #{cachedIdx} for {cacheKey}");
-                    SetStatus($"Re-used block at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}");
-                    return;
-                }
-                // AddInstanceObject failed — fall through to the
-                // re-import path so the user still gets their drop.
-                BkLog.W($"ImportAtPoint: cached InstDef #{cachedIdx} present but AddInstanceObject failed; re-importing");
-            }
+            string assetName = null;
+            if (_grid_static_currentHit.HasValue
+                && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
+                assetName = nv.GetString();
 
-            var preIds = new System.Collections.Generic.HashSet<Guid>();
-            foreach (var o in doc.Objects) preIds.Add(o.Id);
-
-            var script = $"_-Import \"{path}\" _Enter _Enter";
-            if (!RhinoApp.RunScript(script, false))
+            // Capture imported IDs via the AddRhinoObject event; the
+            // RunImportSerialized wrapper around the outer ImportAtPoint
+            // guarantees no other import is interleaving.
+            var newIds = ImportAndCapture(doc, path);
+            if (newIds == null)
             {
                 SetStatus("Import command returned false.");
                 return;
-            }
-
-            // Find newly-imported objects. We DON'T SuppressWireframe per
-            // object here — when blockify succeeds (the common case)
-            // these objects move into an InstanceDefinition and stop
-            // being directly rendered, so the per-object display
-            // override is wasted work. The wrap-up below applies it on
-            // either the InstanceObject (success) or the original
-            // members (blockify-failed fallback) instead.
-            var newIds = new System.Collections.Generic.List<Guid>();
-            foreach (var o in doc.Objects)
-            {
-                if (preIds.Contains(o.Id)) continue;
-                newIds.Add(o.Id);
             }
             if (newIds.Count == 0)
             {
@@ -4067,60 +4039,47 @@ namespace Blendkit.Rhino
                 return;
             }
 
-            // Pull the asset name from the captured drag hit so the
-            // InstDef carries a human-readable label.
-            string assetName = null;
-            if (_grid_static_currentHit.HasValue
-                && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
-                assetName = nv.GetString();
-
-            // Strip materials / decimate before blockify, so the
-            // simplifications stick to the geometry that becomes
-            // InstanceDefinition content (re-instancing later picks them
-            // up automatically). No-op when both flags are off.
+            // Strip materials / decimate before grouping so the
+            // simplifications stick to the visible geometry. No-op
+            // when both flags are off.
             ApplyImportPostProcess(doc, newIds);
 
-            // Wrap the imported geometry into an InstanceDefinition
-            // keyed by asset_base_id + variant tag. Different post-process
-            // settings produce separate InstDefs ("BK_<id>_lite" etc.),
-            // so toggling Strip Materials mid-session doesn't get fooled
-            // into reusing a previous block.
-            int defIdx = BlockifyImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
-            if (defIdx >= 0)
+            // Build a Rhino Group around the imported objects (applying
+            // the placement xform to each member as a side effect of
+            // Objects.Transform inside GroupImported). Each member keeps
+            // its own material, so re-assigning materials post-import
+            // works the same as with any other Rhino object — which is
+            // what the experts asked for.
+            int gIdx = GroupImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
+
+            // Suppress wireframe per-member. After the in-place
+            // transform inside GroupImported the original IDs may be
+            // stale (Transform with delete-original returns new Guids);
+            // enumerate via doc.Groups.GroupMembers when we successfully
+            // grouped, otherwise fall back to FindId on the original
+            // newIds (still valid when xform was identity).
+            var liveIds = new System.Collections.Generic.List<Guid>();
+            if (gIdx >= 0)
             {
-                StoreCachedInstDef(doc, cacheKey, defIdx);
-                // The new InstanceObject is the only object that
-                // wasn't in preIds. Suppress wireframe on it
-                // explicitly — InstanceObject doesn't inherit
-                // attribute overrides from its component members,
-                // so the per-object DisplayModeOverride needs to be
-                // set on the instance itself. Then stamp metadata
-                // for later attribution.
-                var instIds = new System.Collections.Generic.List<Guid>();
-                foreach (var o in doc.Objects)
+                var members = doc.Groups.GroupMembers(gIdx);
+                if (members != null)
                 {
-                    if (preIds.Contains(o.Id)) continue;
-                    instIds.Add(o.Id);
-                    SuppressWireframe(o);
+                    foreach (var m in members)
+                    {
+                        liveIds.Add(m.Id);
+                        SuppressWireframe(m);
+                    }
                 }
-                StampBlenderKitMetadata(doc, instIds, path);
-                BkLog.W($"ImportAtPoint: blockified {newIds.Count} objects into InstDef #{defIdx} ({assetName})");
             }
             else
             {
-                // Blockify failed (no asset_base_id, or InstDef.Add
-                // returned -1). Fall back to the original behaviour:
-                // translate originals in place. Now we DO need
-                // per-member SuppressWireframe — they're the visible
-                // objects.
                 foreach (var id in newIds)
                 {
-                    doc.Objects.Transform(id, xform, true);
                     var ro = doc.Objects.FindId(id);
-                    if (ro != null) SuppressWireframe(ro);
+                    if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                 }
-                StampBlenderKitMetadata(doc, newIds, path);
             }
+            StampBlenderKitMetadata(doc, liveIds, path);
             doc.Views.Redraw();
             // Preview-cube cleanup is handled by ImportForDrop, which
             // wraps this method for drag flows. Click-import callers
@@ -4128,11 +4087,181 @@ namespace Blendkit.Rhino
             SetStatus($"Dropped at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}");
         }
 
-        // ----- InstanceDefinition reuse cache -----
-        // Maps RhinoDoc.RuntimeSerialNumber → (asset_base_id → InstanceDef
-        // index). Lets repeated drops of the same asset reuse a single
-        // block instead of duplicating geometry every time. Doc-scoped
-        // because InstDef indexes mean nothing across documents.
+        // ===== Serialized-import machinery ======================================
+        //
+        // Rhino's `_-Import` command is synchronous on the UI thread, but it
+        // pumps the Windows message loop internally (so its progress dialog
+        // stays responsive). That pump dispatches queued `InvokeOnUiThread`
+        // callbacks — including any other ImportFile / ImportForDrop /
+        // ImportAtPickedPoint that just landed from a different convert task.
+        // Result: two imports interleave on the same UI thread, both snapshot
+        // `preIds` before the other finishes, and the blockify/group step
+        // grabs each other's objects. Symptom: "two assets imported around
+        // the same time end up grouped together".
+        //
+        // Fix: a process-wide single-slot guard. While one import is in
+        // progress, additional imports queue (in arrival order) and replay
+        // via `InvokeOnUiThread` after the current one returns.
+        private static bool _importInProgress;
+        private static readonly System.Collections.Generic.Queue<Action> _pendingImports = new();
+
+        /// <summary>
+        /// Run <paramref name="work"/> with the global "an import is running"
+        /// flag set. If something is already running, enqueue and bail —
+        /// the in-progress import's finally-block will drain the queue.
+        /// </summary>
+        private static void RunImportSerialized(Action work)
+        {
+            if (_importInProgress)
+            {
+                _pendingImports.Enqueue(work);
+                BkLog.W($"RunImportSerialized: import in progress, queued ({_pendingImports.Count} waiting)");
+                return;
+            }
+            _importInProgress = true;
+            try { work(); }
+            finally
+            {
+                _importInProgress = false;
+                if (_pendingImports.Count > 0)
+                {
+                    var next = _pendingImports.Dequeue();
+                    // Re-post via InvokeOnUiThread instead of calling
+                    // directly so we don't grow the stack with each queued
+                    // import + give Rhino a chance to settle between them.
+                    RhinoApp.InvokeOnUiThread((Action)(() => RunImportSerialized(next)));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Run `_-Import` and capture EXACTLY the objects it adds — via the
+        /// <see cref="global::Rhino.RhinoDoc.AddRhinoObject"/> event rather
+        /// than a doc-state snapshot diff. The diff approach was fragile
+        /// against message-pump re-entrancy; the event approach is precise
+        /// when combined with <see cref="RunImportSerialized"/>.
+        ///
+        /// Returns the captured Guids, or null if `_-Import` returned false.
+        /// </summary>
+        private static System.Collections.Generic.List<Guid> ImportAndCapture(
+            global::Rhino.RhinoDoc doc, string path)
+        {
+            var captured = new System.Collections.Generic.List<Guid>();
+            // AddRhinoObject is a static event on RhinoDoc — fires for
+            // every doc in the host process. Filter by Document so a
+            // background doc's noise (e.g. Headless import) doesn't leak
+            // into our captured set.
+            EventHandler<global::Rhino.DocObjects.RhinoObjectEventArgs> handler = (s, e) =>
+            {
+                if (e?.TheObject == null) return;
+                // Filter by doc via TheObject.Document so background docs
+                // can't pollute our captured set.
+                var od = e.TheObject.Document;
+                if (od != null && od.RuntimeSerialNumber != doc.RuntimeSerialNumber) return;
+                captured.Add(e.TheObject.Id);
+            };
+            global::Rhino.RhinoDoc.AddRhinoObject += handler;
+            try
+            {
+                var script = $"_-Import \"{path}\" _Enter _Enter";
+                if (!RhinoApp.RunScript(script, false)) return null;
+            }
+            finally
+            {
+                global::Rhino.RhinoDoc.AddRhinoObject -= handler;
+            }
+            return captured;
+        }
+
+        /// <summary>
+        /// Bundle freshly-imported objects into a Rhino <c>Group</c> at the
+        /// requested transform. Replaces the older BlockifyImported (which
+        /// used InstanceDefinitions / blocks); see the comment block above
+        /// _instDefCache for why we moved off blocks.
+        ///
+        /// Each imported object keeps its own material, attributes, and
+        /// independent identity — selecting any member with group-select
+        /// on selects the whole asset, and re-assigning a material works
+        /// the same as on any other Rhino object.
+        ///
+        /// Returns the new group index, or -1 on failure / empty input.
+        /// </summary>
+        private static int GroupImported(
+            global::Rhino.RhinoDoc doc,
+            System.Collections.Generic.IList<Guid> ids,
+            string assetBaseId,
+            string assetName,
+            global::Rhino.Geometry.Transform xform,
+            string variantSuffix = "")
+        {
+            if (doc == null || ids == null || ids.Count == 0) return -1;
+
+            // Apply the placement transform to each fresh import. Unlike
+            // the BlockifyImported era where the InstanceObject carried
+            // the xform, groups have no such carrier — each member must
+            // be transformed in place. Transform(id, xform, true) deletes
+            // the original and returns the new Guid; we collect the new
+            // IDs because Rhino's Groups API expects the live ones.
+            var liveIds = new System.Collections.Generic.List<Guid>(ids.Count);
+            if (xform.IsIdentity)
+            {
+                liveIds.AddRange(ids);
+            }
+            else
+            {
+                foreach (var id in ids)
+                {
+                    var newId = doc.Objects.Transform(id, xform, true);
+                    liveIds.Add(newId == Guid.Empty ? id : newId);
+                }
+            }
+
+            string nameRoot = !string.IsNullOrEmpty(assetBaseId)
+                ? "BK_" + assetBaseId + variantSuffix
+                : (!string.IsNullOrEmpty(assetName) ? "BK_" + assetName + variantSuffix : "BK_imported" + variantSuffix);
+            string groupName = nameRoot;
+            int suffix = 1;
+            // Groups.Find(string) returns the group index, -1 if no match.
+            // Groups.FindIndex takes an int and resolves by index — wrong
+            // verb for "is this name taken".
+            while (doc.Groups.Find(groupName) >= 0)
+                groupName = nameRoot + "_" + (++suffix);
+
+            try
+            {
+                int gIdx = doc.Groups.Add(groupName, liveIds);
+                if (gIdx < 0)
+                {
+                    BkLog.W($"GroupImported: Groups.Add returned {gIdx} for '{groupName}' ({liveIds.Count} ids)");
+                    return -1;
+                }
+                BkLog.W($"GroupImported: created group #{gIdx} '{groupName}' with {liveIds.Count} members");
+                return gIdx;
+            }
+            catch (Exception ex)
+            {
+                BkLog.W($"GroupImported: {ex.Message}");
+                return -1;
+            }
+        }
+
+        // ----- InstanceDefinition reuse cache (DISABLED) -----
+        // Previously: maps RhinoDoc.RuntimeSerialNumber → (asset_base_id →
+        // InstanceDef index). Lets repeated drops of the same asset reuse a
+        // single block instead of duplicating geometry every time.
+        //
+        // Disabled because we no longer blockify: imports become Rhino
+        // Groups of independent objects (see GroupImported), so there's no
+        // shared definition to point at on a repeat-drop. Each drop creates
+        // a fresh copy — file size grows linearly with placements, but the
+        // user gets to re-assign materials per-object the way Rhino-native
+        // workflows expect.
+        //
+        // The cache field and helpers stay in the file so the call sites
+        // still compile; LookupCachedInstDef now always returns -1 (cache
+        // miss), so every drop falls through to the import+group path.
+        // Removing the call sites entirely is a larger cleanup left for
+        // when we're confident the new model is keepers.
         private static readonly System.Collections.Generic.Dictionary<uint,
             System.Collections.Generic.Dictionary<string, int>> _instDefCache = new();
         // Asset-base-id of the most recently grabbed hit. Captured by
@@ -4169,6 +4298,12 @@ namespace Blendkit.Rhino
 
         private static int LookupCachedInstDef(global::Rhino.RhinoDoc doc, string cacheKey)
         {
+            // Cache disabled: we no longer blockify imports (see the
+            // comment block above _instDefCache). Returning -1 here makes
+            // every existing call site short-circuit cleanly to the
+            // import-and-group path without touching the call sites.
+            return -1;
+#pragma warning disable CS0162  // unreachable code; kept for easy revert
             if (doc == null || string.IsNullOrEmpty(cacheKey)) return -1;
             if (_instDefCache.TryGetValue(doc.RuntimeSerialNumber, out var bag)
                 && bag.TryGetValue(cacheKey, out var idx))
@@ -4197,6 +4332,7 @@ namespace Blendkit.Rhino
                 return byName.Index;
             }
             return -1;
+#pragma warning restore CS0162
         }
 
         private static void StoreCachedInstDef(global::Rhino.RhinoDoc doc, string assetBaseId, int idx)
@@ -4405,60 +4541,33 @@ namespace Blendkit.Rhino
             // Run on UI thread so RhinoDoc and the GetPoint prompt behave.
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
+                // RunImportSerialized: guards against another convert
+                // task firing its own ImportAt* in the message-pump
+                // window while ours is asking the user to pick a point.
+                RunImportSerialized(() =>
+                {
                 try
                 {
                     var doc = global::Rhino.RhinoDoc.ActiveDoc;
                     WithUndo(doc, "BlenderKit: Import asset (pick point)", () =>
                     {
 
-                    // Cache fast-path: same asset_base_id + variant already
-                    // lives in the doc as an InstanceDefinition. Variant tag
-                    // (Strip / Decimate state) is part of the cache key —
-                    // see CacheKeyForBaseId comment.
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
-                    string cacheKeyFast = CacheKeyForBaseId(assetBaseIdFast);
-                    int cachedFast = LookupCachedInstDef(doc, cacheKeyFast);
-                    if (cachedFast >= 0)
-                    {
-                        var gpFast = new global::Rhino.Input.Custom.GetPoint();
-                        gpFast.SetCommandPrompt("Place cached block (Esc to leave at origin)");
-                        var resFast = gpFast.Get();
-                        var ptFast = resFast == global::Rhino.Input.GetResult.Point
-                            ? gpFast.Point() : global::Rhino.Geometry.Point3d.Origin;
-                        var xfFast = global::Rhino.Geometry.Transform.Translation(
-                            ptFast - global::Rhino.Geometry.Point3d.Origin);
-                        var iid = doc.Objects.AddInstanceObject(cachedFast, xfFast);
-                        if (iid != Guid.Empty)
-                        {
-                            StampBlenderKitMetadata(doc, new[] { iid }, "(cached InstDef)");
-                            doc.Views.Redraw();
-                            BkLog.W($"ImportAtPickedPoint: reused cached InstDef #{cachedFast}");
-                            SetStatus($"Re-used block at ({ptFast.X:F2}, {ptFast.Y:F2}, {ptFast.Z:F2})");
-                            return;
-                        }
-                        // Fall through to a fresh import if InstDef placement failed.
-                    }
-
-                    var beforeIds = new HashSet<Guid>();
-                    foreach (var o in doc.Objects) beforeIds.Add(o.Id);
+                    string assetName = null;
+                    if (_grid_static_currentHit.HasValue
+                        && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
+                        assetName = nv.GetString();
 
                     SetStatus($"Importing {System.IO.Path.GetFileName(path)} — pick a point in the viewport (Esc = origin).");
-                    var script = $"_-Import \"{path}\" _Enter _Enter";
-                    var ok = RhinoApp.RunScript(script, false);
-                    if (!ok) { AddMarkerCube(path); return; }
 
-                    // Identify objects added by the import. SuppressWireframe
-                    // is deferred to the post-blockify branches so we don't
-                    // burn cycles on member geometry that's about to be
-                    // hidden behind an InstanceObject anyway.
-                    var added = new List<Guid>();
-                    foreach (var o in doc.Objects)
-                    {
-                        if (!beforeIds.Contains(o.Id)) added.Add(o.Id);
-                    }
+                    // Capture every object _-Import adds via the event;
+                    // RunImportSerialized prevents another import's
+                    // events from leaking in.
+                    var added = ImportAndCapture(doc, path);
+                    if (added == null) { AddMarkerCube(path); return; }
+                    if (added.Count == 0) { SetStatus("Import produced no objects."); return; }
 
-                    // Strip materials / decimate before the geometry gets
-                    // moved into place. Same hook point as ImportAtPointCore.
+                    // Strip materials / decimate before placement.
                     ApplyImportPostProcess(doc, added);
 
                     var gp = new global::Rhino.Input.Custom.GetPoint();
@@ -4469,43 +4578,30 @@ namespace Blendkit.Rhino
                     var xform = global::Rhino.Geometry.Transform.Translation(
                         pt - global::Rhino.Geometry.Point3d.Origin);
 
-                    // Blockify so a future import of the same asset hits
-                    // the cache fast-path. assetBaseId may be empty for
-                    // direct file paths, which makes the cache key fall
-                    // back to the asset's name; that's still better than
-                    // duplicating geometry.
-                    string assetName = null;
-                    if (_grid_static_currentHit.HasValue
-                        && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
-                        assetName = nv.GetString();
-                    int defIdx = BlockifyImported(doc, added, assetBaseIdFast, assetName, xform, NameSuffixForVariant());
-                    if (defIdx >= 0)
+                    int gIdx = GroupImported(doc, added, assetBaseIdFast, assetName, xform, NameSuffixForVariant());
+
+                    var liveIds = new List<Guid>();
+                    if (gIdx >= 0)
                     {
-                        StoreCachedInstDef(doc, cacheKeyFast, defIdx);
-                        // The new InstanceObject also needs SuppressWireframe;
-                        // InstanceObjects don't inherit DisplayModeOverride
-                        // from their components.
-                        var instIds = new List<Guid>();
-                        foreach (var o in doc.Objects)
+                        var members = doc.Groups.GroupMembers(gIdx);
+                        if (members != null)
                         {
-                            if (beforeIds.Contains(o.Id)) continue;
-                            instIds.Add(o.Id);
-                            SuppressWireframe(o);
+                            foreach (var m in members)
+                            {
+                                liveIds.Add(m.Id);
+                                SuppressWireframe(m);
+                            }
                         }
-                        StampBlenderKitMetadata(doc, instIds, path);
                     }
                     else
                     {
-                        // Blockify failed → originals stay visible, so
-                        // suppress wireframe per-object now.
                         foreach (var id in added)
                         {
-                            doc.Objects.Transform(id, xform, true);
                             var ro = doc.Objects.FindId(id);
-                            if (ro != null) SuppressWireframe(ro);
+                            if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                         }
-                        StampBlenderKitMetadata(doc, added, path);
                     }
+                    StampBlenderKitMetadata(doc, liveIds, path);
                     doc.Views.Redraw();
                     SetStatus(res == global::Rhino.Input.GetResult.Point
                         ? $"Placed at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}"
@@ -4513,6 +4609,7 @@ namespace Blendkit.Rhino
                     });
                 }
                 catch (Exception ex) { SetStatus("Drop error: " + ex.Message); }
+                });
             }));
         }
 
@@ -5186,6 +5283,14 @@ namespace Blendkit.Rhino
         {
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
+                // Wrap the body in RunImportSerialized so a second
+                // ImportFile that lands while _-Import is pumping the
+                // message loop (common when two convert tasks finish
+                // back-to-back) gets queued instead of interleaving.
+                // See the comment block above _importInProgress for
+                // the race this avoids.
+                RunImportSerialized(() =>
+                {
                 try
                 {
                     // HDR / EXR aren't geometry — they're image-based
@@ -5200,98 +5305,75 @@ namespace Blendkit.Rhino
                     WithUndo(doc, "BlenderKit: Import asset", () =>
                     {
 
-                    // Cache fast-path: same asset_base_id + variant already
-                    // blockified earlier in the session. Variant tag (Strip
-                    // / Decimate state) is part of the cache key so a
-                    // toggle between drops doesn't reuse a stale block.
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
-                    string cacheKeyFast = CacheKeyForBaseId(assetBaseIdFast);
-                    int cachedFast = LookupCachedInstDef(doc, cacheKeyFast);
-                    if (cachedFast >= 0)
+                    string assetName = null;
+                    if (_grid_static_currentHit.HasValue
+                        && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
+                        assetName = nv.GetString();
+
+                    // Capture exactly the objects _-Import adds — no
+                    // doc-state snapshot diff. Combined with the
+                    // RunImportSerialized wrapper this is bulletproof
+                    // against parallel-import contamination.
+                    var newIds = ImportAndCapture(doc, path);
+                    if (newIds == null)
                     {
-                        var iid = doc.Objects.AddInstanceObject(cachedFast, global::Rhino.Geometry.Transform.Identity);
-                        if (iid != Guid.Empty)
-                        {
-                            StampBlenderKitMetadata(doc, new[] { iid }, "(cached InstDef)");
-                            doc.Views.Redraw();
-                            BkLog.W($"ImportFile: reused cached InstDef #{cachedFast}");
-                            SetStatus($"Re-used block: {System.IO.Path.GetFileName(path)}");
-                            return;
-                        }
+                        // _-Import returned false. Drop a marker cube at
+                        // origin so users can still verify the drag-drop
+                        // pipeline works end-to-end.
+                        AddMarkerCube(path);
+                        SetStatus($"Import command failed for {System.IO.Path.GetFileName(path)}.");
+                        return;
+                    }
+                    if (newIds.Count == 0)
+                    {
+                        SetStatus("Import produced no objects.");
+                        return;
                     }
 
-                    var preIds = new System.Collections.Generic.HashSet<Guid>();
-                    foreach (var o in doc.Objects) preIds.Add(o.Id);
+                    // Strip materials / decimate before grouping.
+                    ApplyImportPostProcess(doc, newIds);
+                    int gIdx = GroupImported(doc, newIds, assetBaseIdFast, assetName,
+                        global::Rhino.Geometry.Transform.Identity, NameSuffixForVariant());
 
-                    var script = $"_-Import \"{path}\" _Enter _Enter";
-                    var ok = RhinoApp.RunScript(script, false);
-                    if (ok)
+                    // Suppress wireframe on each member and stamp
+                    // metadata. We have to re-resolve the IDs because
+                    // GroupImported may have transformed them in place
+                    // (Transform(id, _, true) → new Guid). For the
+                    // identity-transform path above the IDs are stable.
+                    // Use the doc.Groups to enumerate live members so
+                    // we don't track the new Guids ourselves.
+                    var liveIds = new System.Collections.Generic.List<Guid>();
+                    if (gIdx >= 0)
                     {
-                        // Collect the just-imported objects; SuppressWireframe
-                        // is deferred to the post-blockify branches so we
-                        // don't burn cycles on member geometry that's about
-                        // to be hidden inside an InstanceDefinition.
-                        var newIds = new System.Collections.Generic.List<Guid>();
-                        foreach (var o in doc.Objects)
+                        var members = doc.Groups.GroupMembers(gIdx);
+                        if (members != null)
                         {
-                            if (preIds.Contains(o.Id)) continue;
-                            newIds.Add(o.Id);
-                        }
-                        // Strip materials / decimate before blockify.
-                        ApplyImportPostProcess(doc, newIds);
-                        // Blockify so the next click-import of the same
-                        // asset hits the fast path above.
-                        string assetName = null;
-                        if (_grid_static_currentHit.HasValue
-                            && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
-                            assetName = nv.GetString();
-                        int defIdx = BlockifyImported(doc, newIds, assetBaseIdFast, assetName,
-                            global::Rhino.Geometry.Transform.Identity, NameSuffixForVariant());
-                        if (defIdx >= 0)
-                        {
-                            StoreCachedInstDef(doc, cacheKeyFast, defIdx);
-                            // Apply wireframe suppression to the new
-                            // InstanceObject too — see ImportAtPoint
-                            // comment. Components don't propagate.
-                            var instIds = new System.Collections.Generic.List<Guid>();
-                            foreach (var o in doc.Objects)
+                            foreach (var m in members)
                             {
-                                if (preIds.Contains(o.Id)) continue;
-                                instIds.Add(o.Id);
-                                SuppressWireframe(o);
+                                liveIds.Add(m.Id);
+                                SuppressWireframe(m);
                             }
-                            StampBlenderKitMetadata(doc, instIds, path);
-                            BkLog.W($"ImportFile: blockified {newIds.Count} objs into InstDef #{defIdx} (assetBaseId='{assetBaseIdFast}', name='{assetName}')");
                         }
-                        else
-                        {
-                            // Blockify failed → originals stay visible,
-                            // suppress per-member now.
-                            foreach (var id in newIds)
-                            {
-                                var ro = doc.Objects.FindId(id);
-                                if (ro != null) SuppressWireframe(ro);
-                            }
-                            StampBlenderKitMetadata(doc, newIds, path);
-                            BkLog.W($"ImportFile: blockify skipped/failed for assetBaseId='{assetBaseIdFast}' (newIds={newIds.Count})");
-                        }
-                    }
-                    doc.Views.Redraw();
-                    if (ok)
-                    {
-                        SetStatus($"Imported {System.IO.Path.GetFileName(path)}.");
                     }
                     else
                     {
-                        // Drop-test fallback: many BlenderKit-exported .glb
-                        // files don't load in Rhino's importer yet. Drop a
-                        // marker cube at origin so we can verify the drag-drop
-                        // pipeline end-to-end while the export is being fixed.
-                        AddMarkerCube(path);
+                        // GroupImported failed (e.g. empty assetName +
+                        // empty assetBaseId, or doc.Groups.Add returned
+                        // -1). Stamp + suppress the raw imported IDs.
+                        foreach (var id in newIds)
+                        {
+                            var ro = doc.Objects.FindId(id);
+                            if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
+                        }
                     }
+                    StampBlenderKitMetadata(doc, liveIds, path);
+                    doc.Views.Redraw();
+                    SetStatus($"Imported {System.IO.Path.GetFileName(path)}.");
                     });
                 }
                 catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
+                });
             }));
         }
 
