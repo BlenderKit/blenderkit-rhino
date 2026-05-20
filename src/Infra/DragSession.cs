@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Eto.Forms;
@@ -57,6 +58,13 @@ namespace Blendkit.Rhino.Infra
         public void Start()
         {
             _started = true;
+            // Build the ray-target cache ONCE here so ProjectWithNormal's
+            // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
+            // and (worst case) Duplicate+Transform every InstanceObject
+            // member-mesh at 30 Hz. The cache lives only for the duration
+            // of this drag; Stop() drops it. See BuildRayTargets for the
+            // full rationale.
+            BuildRayTargets();
             // Wheel-capture is Windows-only (uses WH_MOUSE_LL via
             // user32.dll). On macOS / Linux we just don't capture
             // wheel events during drag — the viewport will zoom
@@ -73,6 +81,7 @@ namespace Blendkit.Rhino.Infra
             _started = false;
             _timer.Stop();
             _wheel?.Uninstall(); _wheel = null;
+            _rayTargets = null;  // release the per-drag mesh refs
             if (disablePreview && Preview != null) Preview.Enabled = false;
             if (_lastView != null) _lastView.Redraw();
         }
@@ -244,6 +253,123 @@ namespace Blendkit.Rhino.Infra
             return null;
         }
 
+        // ===== Per-drag ray-target cache ============================
+        //
+        // The old ProjectWithNormal iterated RhinoDoc.ActiveDoc.Objects
+        // every tick — for every InstanceObject it then walked all
+        // definition members and, on each one, called Duplicate +
+        // Transform on the mesh before the raycast. At 30 Hz that's a
+        // mesh allocation per (object × member) PER FRAME, which murders
+        // the drag-drop frame rate in any scene with imported blocks
+        // (visible vs. plain camera rotation, which uses Rhino's
+        // pre-built display caches and stays smooth).
+        //
+        // BuildRayTargets pre-computes a flat list at drag-start:
+        //   * For plain Mesh objects: hold a ref to the mesh, no xform.
+        //   * For InstanceObjects: hold a ref to each member's mesh
+        //     plus the instance's xform AND its precomputed inverse.
+        //     The raycast in TestRayTarget transforms the RAY into
+        //     mesh-local space (two Point3d ops) instead of duplicating
+        //     and transforming a whole mesh. After the hit, the hit
+        //     point + normal are transformed back to world space.
+        //
+        // Per-frame allocations drop to roughly zero. The drag-start
+        // pass is O(scene-object-count) and runs once.
+        //
+        // Doc-mutation during a drag (rare — typical drag is < 5s) is
+        // not handled: the cache is a snapshot. Worst case is the user
+        // adds geometry mid-drag and the new objects aren't pickable
+        // until the next drag.
+
+        private struct RayTarget
+        {
+            public Guid TopLevelId;
+            public Mesh Mesh;
+            // True when Xform/InverseXform are meaningful (InstanceObject
+            // member); false for plain meshes already in world space.
+            public bool HasXform;
+            public Transform Xform;        // world ← mesh-local
+            public Transform InverseXform; // mesh-local ← world
+        }
+
+        private static List<RayTarget> _rayTargets;
+
+        private static void BuildRayTargets()
+        {
+            var doc = RhinoDoc.ActiveDoc;
+            _rayTargets = new List<RayTarget>(64);
+            if (doc == null) return;
+
+            foreach (var obj in doc.Objects)
+            {
+                if (obj == null || !obj.IsValid) continue;
+                if (obj.Attributes.Mode == ObjectMode.Hidden) continue;
+
+                // InstanceObject (block): cache one entry per member-mesh
+                // with the instance's transform. Skip members whose
+                // transform isn't invertible (degenerate scale = drop
+                // would never hit them anyway).
+                if (obj is InstanceObject inst && inst.InstanceDefinition != null)
+                {
+                    var members = inst.InstanceDefinition.GetObjects();
+                    var xform = inst.InstanceXform;
+                    if (!xform.TryGetInverse(out var inv)) continue;
+                    if (members == null) continue;
+                    foreach (var member in members)
+                    {
+                        if (member == null) continue;
+                        Mesh[] mms = null;
+                        if (member.Geometry is Mesh mm0) mms = new[] { mm0 };
+                        else
+                        {
+                            try { mms = member.GetMeshes(MeshType.Render); } catch { }
+                            if (mms == null || mms.Length == 0)
+                            {
+                                try { mms = member.GetMeshes(MeshType.Default); } catch { }
+                            }
+                        }
+                        if (mms == null) continue;
+                        foreach (var src in mms)
+                        {
+                            if (src == null) continue;
+                            _rayTargets.Add(new RayTarget
+                            {
+                                TopLevelId = obj.Id,
+                                Mesh = src,
+                                HasXform = true,
+                                Xform = xform,
+                                InverseXform = inv,
+                            });
+                        }
+                    }
+                    continue;
+                }
+
+                // Plain object — direct meshes or render meshes.
+                Mesh[] meshes = null;
+                if (obj.Geometry is Mesh mm) meshes = new[] { mm };
+                else
+                {
+                    try { meshes = obj.GetMeshes(MeshType.Render); } catch { }
+                    if (meshes == null || meshes.Length == 0)
+                    {
+                        try { meshes = obj.GetMeshes(MeshType.Default); } catch { }
+                    }
+                }
+                if (meshes == null) continue;
+                foreach (var m in meshes)
+                {
+                    if (m == null) continue;
+                    _rayTargets.Add(new RayTarget
+                    {
+                        TopLevelId = obj.Id,
+                        Mesh = m,
+                        HasXform = false,
+                    });
+                }
+            }
+        }
+
         private static (Point3d pt, Vector3d normal, Guid hitId) ProjectWithNormal(
             RhinoView view, int sx, int sy)
         {
@@ -289,20 +415,36 @@ namespace Blendkit.Rhino.Infra
             if (dir.IsZero) return (Point3d.Origin, Vector3d.ZAxis, Guid.Empty);
             dir.Unitize();
 
-            // Inner test against one mesh + the (top-level) Guid we'd
-            // attribute the hit to. Used by both the plain and the
-            // InstanceObject branch below.
-            void TestMesh(Mesh m, Guid topLevelId)
+            // Tight per-target raycast. For a plain (already-world-space)
+            // mesh: just MeshLine on the original. For an InstanceObject
+            // member: transform the ray's endpoints into mesh-local
+            // space (two Point3d ops), MeshLine on the original mesh,
+            // then transform the hit point + normal back to world.
+            // Zero per-frame mesh allocations regardless of scene size.
+            if (_rayTargets == null) BuildRayTargets();
+            var targets = _rayTargets;  // capture for thread-safety
+            for (int t = 0; t < targets.Count; t++)
             {
-                if (m == null) return;
+                var tgt = targets[t];
+                var m = tgt.Mesh;
+                if (m == null) continue;
+                // Lazy face-normal compute — cached on the Mesh itself,
+                // so this only fires the first frame we touch it.
                 if (m.FaceNormals.Count == 0) m.FaceNormals.ComputeFaceNormals();
-                var hits = Intersection.MeshLine(m, ray, out int[] faceIds);
-                if (hits == null) return;
+
+                Line localRay = ray;
+                if (tgt.HasXform)
+                {
+                    var p1 = ray.From; p1.Transform(tgt.InverseXform);
+                    var p2 = ray.To;   p2.Transform(tgt.InverseXform);
+                    localRay = new Line(p1, p2);
+                }
+
+                var hits = Intersection.MeshLine(m, localRay, out int[] faceIds);
+                if (hits == null) continue;
                 for (int i = 0; i < hits.Length; i++)
                 {
                     var p = hits[i];
-                    var d = camera.DistanceTo(p);
-                    if (d >= bestDist) continue;
                     Vector3d nn = Vector3d.ZAxis;
                     if (faceIds != null && i < faceIds.Length
                         && faceIds[i] < m.FaceNormals.Count)
@@ -311,80 +453,23 @@ namespace Blendkit.Rhino.Infra
                         nn = new Vector3d(fn.X, fn.Y, fn.Z);
                         if (nn.IsZero) nn = Vector3d.ZAxis;
                     }
+                    // Transform the hit point + normal back to world
+                    // space so the camera-distance compare and
+                    // downstream consumers see consistent coords.
+                    if (tgt.HasXform)
+                    {
+                        p.Transform(tgt.Xform);
+                        nn.Transform(tgt.Xform);
+                        if (nn.IsZero) nn = Vector3d.ZAxis;
+                        else nn.Unitize();
+                    }
+                    var d = camera.DistanceTo(p);
+                    if (d >= bestDist) continue;
                     bestDist = d;
                     bestPt = p;
                     bestNormal = nn;
-                    bestHitId = topLevelId;
+                    bestHitId = tgt.TopLevelId;
                 }
-            }
-
-            foreach (var obj in RhinoDoc.ActiveDoc.Objects)
-            {
-                if (obj == null || !obj.IsValid) continue;
-                if (obj.Attributes.Mode == ObjectMode.Hidden) continue;
-
-                // InstanceObject (block) — its Geometry is an
-                // InstanceReferenceGeometry placeholder, not a Mesh, so
-                // the plain "is Mesh" / GetMeshes path returns nothing
-                // and the user's drop falls through to the cplane
-                // (verified in rhino_panel.log: hit=00000000... when
-                // dropping material on an imported BlenderKit model).
-                // Walk the InstanceDefinition's members and raycast
-                // each one's mesh, transformed by the instance's
-                // xform. Attribute the hit to the top-level
-                // InstanceObject so AssignMaterialToObject can find it
-                // and propagate to the InstDef members.
-                if (obj is InstanceObject inst && inst.InstanceDefinition != null)
-                {
-                    var members = inst.InstanceDefinition.GetObjects();
-                    var xform = inst.InstanceXform;
-                    if (members != null)
-                    {
-                        foreach (var member in members)
-                        {
-                            if (member == null) continue;
-                            Mesh[] mms = null;
-                            if (member.Geometry is Mesh mm0) mms = new[] { mm0 };
-                            else
-                            {
-                                try { mms = member.GetMeshes(MeshType.Render); } catch { }
-                                if (mms == null || mms.Length == 0)
-                                {
-                                    try { mms = member.GetMeshes(MeshType.Default); } catch { }
-                                }
-                            }
-                            if (mms == null) continue;
-                            foreach (var srcMesh in mms)
-                            {
-                                if (srcMesh == null) continue;
-                                // Transform a duplicate so the raycast
-                                // sees world-space geometry without
-                                // mutating the InstDef's stored mesh.
-                                var dup = (Mesh)srcMesh.Duplicate();
-                                dup.Transform(xform);
-                                TestMesh(dup, obj.Id);
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                // Plain object. Direct Mesh objects (typical of imported
-                // glTF) → use the geometry. Breps / extrusions → fall
-                // back to render meshes. Try both because some imports
-                // expose either path.
-                Mesh[] meshes = null;
-                if (obj.Geometry is Mesh mm) meshes = new[] { mm };
-                else
-                {
-                    try { meshes = obj.GetMeshes(MeshType.Render); } catch { }
-                    if (meshes == null || meshes.Length == 0)
-                    {
-                        try { meshes = obj.GetMeshes(MeshType.Default); } catch { }
-                    }
-                }
-                if (meshes == null || meshes.Length == 0) continue;
-                foreach (var m in meshes) TestMesh(m, obj.Id);
             }
 
             if (bestPt.HasValue) return (bestPt.Value, bestNormal, bestHitId);
