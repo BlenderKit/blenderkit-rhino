@@ -70,6 +70,25 @@ namespace Blendkit.Rhino.Infra
         public static void Clear() => _proxies.Clear();
 
         /// <summary>
+        /// Use an externally-supplied mesh as the proxy for this object
+        /// — no Mesh.Reduce roundtrip. Intended for the PRX-as-proxy
+        /// path: the Blender add-on ships a hand-tuned proxy alongside
+        /// the asset, we read it and adopt it directly, no decimation
+        /// quality loss.
+        ///
+        /// Returns false when <paramref name="proxy"/> is null/empty.
+        /// Otherwise the cache entry is replaced (any previous proxy
+        /// for this id is disposed) and true is returned.
+        /// </summary>
+        public static bool AttachExistingProxy(Guid id, Mesh proxy)
+        {
+            if (proxy == null || proxy.Faces.Count == 0) return false;
+            if (_proxies.TryRemove(id, out var old)) old?.Dispose();
+            _proxies[id] = proxy;
+            return true;
+        }
+
+        /// <summary>
         /// Build a decimated proxy mesh for the given RhinoObject and store
         /// it under the object's Id. Returns false if no proxy was needed
         /// or the mesh couldn't be reduced. Existing entries are overwritten.

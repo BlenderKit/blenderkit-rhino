@@ -87,6 +87,14 @@ namespace Blendkit.Rhino
         // faces. Massive viewport win on high-poly assets.
         private readonly CheckBox _decimatePolygons = new CheckBox { Checked = false };
         private const int DecimateTargetFaceCount = 1000;
+        // Use Proxor proxies: when checked, the import path looks for a
+        // .prxc / .prx sidecar next to the freshly-imported file and
+        // adopts it as the viewport proxy (replacing the default
+        // Mesh.Reduce-decimated proxy). Off by default until the
+        // BlenderKit CDN starts shipping proxor sidecars routinely —
+        // when no sidecar exists the import path falls back to
+        // decimation, so this flag is safe to enable preemptively.
+        private readonly CheckBox _useProxor = new CheckBox { Checked = false };
         // Cascading category picker: a button that opens a ContextMenu built
         // dynamically from CategoriesService.TreeForAssetType. Closer to the
         // Blender addon's nested category enum than a single flat dropdown.
@@ -629,6 +637,23 @@ namespace Blendkit.Rhino
             }
             advanced.AddRow(decimateRow);
 
+            // Use Proxor proxies row — independent of Strip materials.
+            // The PRX/PRXC sidecar (when present) replaces Mesh.Reduce
+            // for the viewport-proxy step. Falls back to decimation
+            // silently when no sidecar exists, so it's safe to leave
+            // checked even before the CDN consistently ships proxor
+            // files. See ProxorLocator + PrxToMesh for the lookup +
+            // load path.
+            var proxorRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(WrapCheck(_useProxor, "Use Proxor viewport proxies (when shipped with the asset)"));
+                inner.EndHorizontal();
+                proxorRow.Content = inner;
+            }
+            advanced.AddRow(proxorRow);
+
             // Wire up the strip-materials side effects:
             //   1. Toggle visibility of the decimate row.
             //   2. Grey out the resolution dropdown — but only when the
@@ -650,9 +675,12 @@ namespace Blendkit.Rhino
             };
             _decimatePolygons.CheckedChanged += (s, e) =>
                 Settings.SetBool("decimate_polygons", _decimatePolygons.Checked == true);
+            _useProxor.CheckedChanged += (s, e) =>
+                Settings.SetBool("import_use_proxor", _useProxor.Checked == true);
             // Restore from settings.
             _stripMaterials.Checked = Settings.GetBool("strip_materials");
             _decimatePolygons.Checked = Settings.GetBool("decimate_polygons");
+            _useProxor.Checked = Settings.GetBool("import_use_proxor");
             // Apply the side effects once on construction so the UI matches
             // the restored state (CheckedChanged doesn't fire from the
             // .Checked = ... assignment above on every Eto backend).
@@ -4509,20 +4537,39 @@ namespace Blendkit.Rhino
                 ud.Set("blenderkit.imported_at", DateTime.UtcNow.ToString("O"));
                 rhObj.CommitChanges();
 
-                // Auto-attach a decimated viewport proxy when the freshly-
-                // imported geometry crosses the face-count threshold. This
-                // is the headline win for the proxy system: dragging in a
-                // 200k-face chair just works smoothly in shaded mode
-                // without the user having to think about it. Wrapped in
-                // try/catch so a failed Mesh.Reduce never sabotages an
-                // otherwise-successful import. Toggle / override via the
-                // BlenderKitProxy command.
+                // Auto-attach a viewport proxy. Two sources, in order:
+                //   1. PRX/PRXC sidecar next to the imported file. Only
+                //      tried when the user's import settings opted into
+                //      "Use proxor proxies". Hand-tuned by whoever
+                //      authored the asset → highest quality, lowest cost.
+                //   2. Mesh.Reduce decimation as fallback. Triggered when
+                //      the freshly-imported geometry crosses the
+                //      face-count threshold.
+                // Either source ends up in ProxyMeshService — the conduit
+                // doesn't care which. Wrapped in try/catch so any
+                // proxy-side failure never sabotages an otherwise-
+                // successful import.
                 try
                 {
-                    if (Infra.ProxyMeshService.ShouldAutoAttach(rhObj))
+                    bool attached = false;
+                    if (Settings.GetBool("import_use_proxor", false))
+                    {
+                        var prxPath = Infra.ProxorLocator.FindForSourcePath(sourcePath);
+                        if (!string.IsNullOrEmpty(prxPath))
+                        {
+                            var proxy = Infra.PrxToMesh.TryLoad(prxPath);
+                            if (proxy != null
+                                && Infra.ProxyMeshService.AttachExistingProxy(rhObj.Id, proxy))
+                            {
+                                attached = true;
+                                BkLog.W($"auto-attached PRX proxy for {rhObj.Id} from {prxPath} (name='{name}')");
+                            }
+                        }
+                    }
+                    if (!attached && Infra.ProxyMeshService.ShouldAutoAttach(rhObj))
                     {
                         var made = Infra.ProxyMeshService.MakeProxyFor(rhObj);
-                        if (made) BkLog.W($"auto-attached proxy for {rhObj.Id} (name='{name}')");
+                        if (made) BkLog.W($"auto-attached decimated proxy for {rhObj.Id} (name='{name}')");
                     }
                 }
                 catch (Exception ex)

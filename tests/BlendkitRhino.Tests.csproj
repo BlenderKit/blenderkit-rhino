@@ -34,5 +34,9 @@
          in tests via a thin shim if needed. For now SearchService is mostly
          pure functions, so we can test BuildUrlQuery without ClientLib. -->
     <Compile Include="..\src\Infra\ClientLib.cs" />
+    <!-- PRX/PRXC reader. Pure CPU work, no Rhino types touched, so it
+         compiles cleanly under net8.0 without RhinoCommon. -->
+    <Compile Include="..\src\Infra\PrxFormat.cs" />
+    <Compile Include="..\src\Infra\ProxorLocator.cs" />
   </ItemGroup>
 </Project>
