@@ -4372,6 +4372,27 @@ namespace Blendkit.Rhino
                 ud.Set("blenderkit.source_path", sourcePath ?? "");
                 ud.Set("blenderkit.imported_at", DateTime.UtcNow.ToString("O"));
                 rhObj.CommitChanges();
+
+                // Auto-attach a decimated viewport proxy when the freshly-
+                // imported geometry crosses the face-count threshold. This
+                // is the headline win for the proxy system: dragging in a
+                // 200k-face chair just works smoothly in shaded mode
+                // without the user having to think about it. Wrapped in
+                // try/catch so a failed Mesh.Reduce never sabotages an
+                // otherwise-successful import. Toggle / override via the
+                // BlenderKitProxy command.
+                try
+                {
+                    if (Infra.ProxyMeshService.ShouldAutoAttach(rhObj))
+                    {
+                        var made = Infra.ProxyMeshService.MakeProxyFor(rhObj);
+                        if (made) BkLog.W($"auto-attached proxy for {rhObj.Id} (name='{name}')");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    BkLog.W($"proxy auto-attach failed for {rhObj.Id}: {ex.Message}");
+                }
             }
         }
         // Snapshot of the hit being dragged. Updated by StartDrag so the

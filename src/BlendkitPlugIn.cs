@@ -24,6 +24,15 @@ namespace Blendkit.Rhino
         public BlendkitPlugIn() { Instance = this; }
         public static BlendkitPlugIn Instance { get; private set; }
 
+        /// <summary>
+        /// Singleton display conduit that swaps decimated proxies in for
+        /// imported meshes in non-rendered viewport modes. Lifecycle is
+        /// tied to OnLoad/OnShutdown — Active toggles via the
+        /// BlenderKitProxy command without losing the cached proxies.
+        /// See <see cref="Infra.ProxyDisplayConduit"/> for the draw logic.
+        /// </summary>
+        public Infra.ProxyDisplayConduit ProxyConduit { get; private set; }
+
         // Self-driving test hook. When TestQuery is non-empty, the panel
         // switches to TestAssetType (default MODEL), runs that query on
         // first open, and auto-downloads + imports the first result.
@@ -90,6 +99,21 @@ namespace Blendkit.Rhino
                             catch (Exception ex) { RhinoApp.WriteLine($"[BlenderKit] AUTOTEST OpenPanel failed: {ex.Message}"); }
                         }));
                     });
+                }
+
+                // Spin up the proxy display conduit. Inert until something
+                // attaches a proxy to a RhinoObject — at which point the
+                // ObjectCulling + PreDrawObjects hooks start firing for
+                // that object in non-rendered viewport modes. See
+                // ProxyMeshService for the cache + decimation entry points
+                // and BlenderKitProxy for the user-facing command.
+                try
+                {
+                    ProxyConduit = new Infra.ProxyDisplayConduit { Enabled = true, Active = true };
+                }
+                catch (Exception ex)
+                {
+                    RhinoApp.WriteLine($"[BlenderKit] proxy conduit init failed: {ex.Message}");
                 }
 
                 RegisterPanel();
