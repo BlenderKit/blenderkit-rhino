@@ -125,6 +125,33 @@ if exist "%YAK_INSTALL%" (
     )
 )
 
+REM ---- Re-point Rhino's plug-in registry at our deployed .rhp ----
+REM After the Yak install is gone, Rhino's HKCU entry for our plug-in
+REM GUID keeps the registration (Name, EnglishName, LoadMode, etc.)
+REM but FileName is left empty — Rhino remembers we exist but doesn't
+REM know where the .rhp lives, so it never loads us even though
+REM %TARGET%\BlendkitRhino.rhp is present. Manual fix is Tools >
+REM Options > Plug-ins > Install... → pick the .rhp, but that's a
+REM click-through every dev rebuild.
+REM
+REM Script the fix: ensure the FileName value of
+REM   HKCU\Software\McNeel\Rhinoceros\8.0\Plug-ins\<guid>
+REM points at our deploy. Idempotent (overwrites with the same value
+REM on subsequent runs), no-op when the key doesn't exist yet (Rhino
+REM will create the registration itself on next launch when it
+REM scans the Plug-ins folder).
+set PLUGIN_GUID=3f1c9d20-2e6b-4a0c-9d5f-1b7a2e4d4f01
+set REGKEY=HKCU\Software\McNeel\Rhinoceros\8.0\Plug-Ins\%PLUGIN_GUID%
+reg query "%REGKEY%" >NUL 2>&1
+if %ERRORLEVEL% EQU 0 (
+    reg add "%REGKEY%" /v FileName /t REG_SZ /d "%TARGET%\BlendkitRhino.rhp" /f >NUL
+    if errorlevel 1 (
+        echo [deploy] WARNING: could not update HKCU registry FileName for plug-in.
+    ) else (
+        echo [deploy] Registry FileName re-pointed at %TARGET%\BlendkitRhino.rhp
+    )
+)
+
 REM ---- Build C# shell (optional) ----
 if "%DO_BUILD%"=="1" (
     where dotnet >nul 2>&1
