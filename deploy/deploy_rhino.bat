@@ -95,6 +95,36 @@ for %%R in ("%TARGET%\*.rhp") do (
     )
 )
 
+REM ---- Purge Yak-installed copies (GUID-collision shadow) ----
+REM Anyone who's installed BlenderKit via Rhino's `_PackageManager` ends
+REM up with the .rhp at
+REM   %APPDATA%\McNeel\Rhinoceros\packages\8.0\BlenderKit\<version>\
+REM as well as our dev copy at %TARGET%. Both .rhp files have the SAME
+REM plug-in GUID (the [Guid("3f1c...")] attribute on BlendkitPlugIn),
+REM so Rhino loads whichever its scanner sees first — typically the
+REM packages-tree copy, which is whatever version the user last
+REM installed from yak. The dev deploy then has zero effect on the
+REM running Rhino, which silently shows old behaviour ("I changed
+REM the code and nothing changed at runtime"). Painful debugging.
+REM
+REM This block deletes the entire packages\8.0\BlenderKit directory
+REM so the loader sees only our deploy at %TARGET%. Subsequent
+REM `_PackageManager` opens won't re-download until the user clicks
+REM Install on a yak listing again, which is the right tradeoff for
+REM a dev who's actively iterating.
+set YAK_INSTALL=%APPDATA%\McNeel\Rhinoceros\packages\8.0\BlenderKit
+if exist "%YAK_INSTALL%" (
+    rmdir /S /Q "%YAK_INSTALL%" 2>nul
+    if exist "%YAK_INSTALL%" (
+        echo [deploy] WARNING: could not fully remove Yak install at %YAK_INSTALL%
+        echo [deploy]          (a process is still holding files open; rerun after
+        echo [deploy]          closing Rhino + any blenderkit-client*.exe).
+    ) else (
+        echo [deploy] Removed Yak-installed copy at %YAK_INSTALL%
+        echo [deploy]   ^(rhino was loading that one in preference to your deploy^)
+    )
+)
+
 REM ---- Build C# shell (optional) ----
 if "%DO_BUILD%"=="1" (
     where dotnet >nul 2>&1
