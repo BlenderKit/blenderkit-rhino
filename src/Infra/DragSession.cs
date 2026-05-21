@@ -65,6 +65,10 @@ namespace Blendkit.Rhino.Infra
             // of this drag; Stop() drops it. See BuildRayTargets for the
             // full rationale.
             BuildRayTargets();
+            // Diagnostic so we can confirm in the panel log that the
+            // drag-perf optimisation is actually live in the deployed
+            // build. If you see this line, you're running the new code.
+            try { RhinoApp.WriteLine($"[BlenderKit][drag] Start: cached {_rayTargets?.Count ?? 0} ray targets"); } catch { }
             // Wheel-capture is Windows-only (uses WH_MOUSE_LL via
             // user32.dll). On macOS / Linux we just don't capture
             // wheel events during drag — the viewport will zoom

@@ -4552,12 +4552,16 @@ namespace Blendkit.Rhino
                 try
                 {
                     bool attached = false;
-                    if (Settings.GetBool("import_use_proxor", false))
+                    bool toggle = Settings.GetBool("import_use_proxor", false);
+                    BkLog.W($"proxy lookup: import_use_proxor={toggle} sourcePath='{sourcePath ?? "(null)"}'");
+                    if (toggle)
                     {
                         var prxPath = Infra.ProxorLocator.FindForSourcePath(sourcePath);
+                        BkLog.W($"proxy lookup: ProxorLocator returned '{prxPath ?? "(none)"}'");
                         if (!string.IsNullOrEmpty(prxPath))
                         {
                             var proxy = Infra.PrxToMesh.TryLoad(prxPath);
+                            BkLog.W($"proxy lookup: PrxToMesh.TryLoad → {(proxy == null ? "null" : $"mesh with {proxy.Faces.Count} faces")}");
                             if (proxy != null
                                 && Infra.ProxyMeshService.AttachExistingProxy(rhObj.Id, proxy))
                             {
