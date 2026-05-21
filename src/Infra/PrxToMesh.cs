@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using Rhino.Geometry;
 
@@ -22,18 +23,41 @@ namespace Blendkit.Rhino.Infra
     /// </summary>
     public static class PrxToMesh
     {
+        // Memoise (file path + mtime) → Mesh. A single import drops N
+        // objects into the doc and StampBlenderKitMetadata's auto-
+        // attach hook fires per object; the OLD code re-read + re-
+        // parsed the same .prxc N times. For a 200-mesh asset that's
+        // 200 gzip-decompress + 200 Mesh constructions — measurable
+        // share of a slow import. mtime is in the key so a fresh
+        // sidecar download invalidates the cached parse.
+        private static readonly ConcurrentDictionary<string, (DateTime Mtime, Mesh Mesh)> _cache
+            = new ConcurrentDictionary<string, (DateTime, Mesh)>(StringComparer.OrdinalIgnoreCase);
+
         /// <summary>
         /// Build a Rhino mesh from the PRX file at <paramref name="path"/>.
         /// Returns null when the file is missing, can't be parsed, or
-        /// contains no mesh triangles.
+        /// contains no mesh triangles. Results are cached by (path, mtime)
+        /// — the returned Mesh may be shared across callers, so callers
+        /// must not mutate it. Cache lifetime is process; restart Rhino
+        /// to flush.
         /// </summary>
         public static Mesh TryLoad(string path)
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            DateTime mtime;
+            try { mtime = File.GetLastWriteTimeUtc(path); }
+            catch { mtime = DateTime.MinValue; }
+            if (_cache.TryGetValue(path, out var entry) && entry.Mtime == mtime)
+            {
+                return entry.Mesh;
+            }
             try
             {
                 var data = PrxFormat.ReadFile(path);
-                return BuildMesh(data);
+                var mesh = BuildMesh(data);
+                if (mesh != null)
+                    _cache[path] = (mtime, mesh);
+                return mesh;
             }
             catch (Exception ex)
             {

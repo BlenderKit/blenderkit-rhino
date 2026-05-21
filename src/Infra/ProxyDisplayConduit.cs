@@ -108,28 +108,29 @@ namespace Blendkit.Rhino.Infra
             }
         }
 
+        // Diffuse-white fallback for proxy rendering. The Mesh.Reduce
+        // path produces meshes whose vertex colours / object colours
+        // default to black; rendering them with the object's
+        // ObjectColor then gives a pure-black silhouette that looks
+        // broken (no shading, no depth cues). PRX proxies are even
+        // worse — they ship with their own colour data which is often
+        // unset (0,0,0). White diffuse always reads as "this is a
+        // proxy, switch to Rendered to see the real materials" which
+        // is the right hint.
+        //
+        // Single shared instance because DisplayMaterial is per-frame
+        // disposable but its content is stateless for our case;
+        // allocating one per object per frame was visible in the
+        // profiler before.
+        private static readonly DisplayMaterial _proxyMaterial = new DisplayMaterial(System.Drawing.Color.White);
+
         private static DisplayMaterial ResolveMaterial(RhinoObject obj)
         {
-            try
-            {
-                var attrs = obj.Attributes;
-                // Use the object's display colour when available. Pulling
-                // the render material would be more accurate but requires
-                // RDK round-trips per frame — too expensive. Display
-                // colour is good enough for proxy mode by design (the
-                // user switches to Rendered to see real materials).
-                var colour = obj.Attributes.ObjectColor;
-                if (attrs.ColorSource == ObjectColorSource.ColorFromLayer)
-                {
-                    var layer = obj.Document?.Layers.FindIndex(attrs.LayerIndex);
-                    if (layer != null) colour = layer.Color;
-                }
-                return new DisplayMaterial(colour);
-            }
-            catch
-            {
-                return new DisplayMaterial(System.Drawing.Color.LightGray);
-            }
+            // Always white-diffuse — see _proxyMaterial comment. We
+            // keep the obj parameter so callers don't have to change
+            // and a future "honor object color when explicitly set"
+            // option can slot in here without churning sites.
+            return _proxyMaterial;
         }
     }
 }

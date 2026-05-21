@@ -4052,10 +4052,21 @@ namespace Blendkit.Rhino
                 && _grid_static_currentHit.Value.TryGetProperty("name", out var nv))
                 assetName = nv.GetString();
 
+            // Per-stage timing so we can profile where the user-visible
+            // "import takes ages and Rhino gets stuck" cost actually
+            // lives. Reads as a four-line breadcrumb in the panel log:
+            //   import-timing: _-Import returned N objects in T ms
+            //   import-timing: ApplyImportPostProcess: T ms
+            //   import-timing: GroupImported: T ms
+            //   import-timing: StampMetadata + auto-proxy: T ms
+            var t0 = System.Diagnostics.Stopwatch.StartNew();
+
             // Capture imported IDs via the AddRhinoObject event; the
             // RunImportSerialized wrapper around the outer ImportAtPoint
             // guarantees no other import is interleaving.
             var newIds = ImportAndCapture(doc, path);
+            t0.Stop();
+            BkLog.W($"import-timing: _-Import returned {(newIds?.Count ?? -1)} objects in {t0.ElapsedMilliseconds} ms");
             if (newIds == null)
             {
                 SetStatus("Import command returned false.");
@@ -4070,7 +4081,10 @@ namespace Blendkit.Rhino
             // Strip materials / decimate before grouping so the
             // simplifications stick to the visible geometry. No-op
             // when both flags are off.
+            var t1 = System.Diagnostics.Stopwatch.StartNew();
             ApplyImportPostProcess(doc, newIds);
+            t1.Stop();
+            BkLog.W($"import-timing: ApplyImportPostProcess: {t1.ElapsedMilliseconds} ms");
 
             // Build a Rhino Group around the imported objects (applying
             // the placement xform to each member as a side effect of
@@ -4078,7 +4092,10 @@ namespace Blendkit.Rhino
             // its own material, so re-assigning materials post-import
             // works the same as with any other Rhino object — which is
             // what the experts asked for.
+            var t2 = System.Diagnostics.Stopwatch.StartNew();
             int gIdx = GroupImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
+            t2.Stop();
+            BkLog.W($"import-timing: GroupImported: {t2.ElapsedMilliseconds} ms");
 
             // Suppress wireframe per-member. After the in-place
             // transform inside GroupImported the original IDs may be
@@ -4107,7 +4124,10 @@ namespace Blendkit.Rhino
                     if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                 }
             }
-            StampBlenderKitMetadata(doc, liveIds, path);
+            var t3 = System.Diagnostics.Stopwatch.StartNew();
+            StampBlenderKitMetadata(doc, liveIds, path, xform);
+            t3.Stop();
+            BkLog.W($"import-timing: StampMetadata + auto-proxy ({liveIds.Count} objects): {t3.ElapsedMilliseconds} ms");
             doc.Views.Redraw();
             // Preview-cube cleanup is handled by ImportForDrop, which
             // wraps this method for drag flows. Click-import callers
@@ -4513,7 +4533,8 @@ namespace Blendkit.Rhino
         /// having to inspect filenames or layers.
         /// </summary>
         private static void StampBlenderKitMetadata(global::Rhino.RhinoDoc doc,
-            System.Collections.Generic.IList<Guid> ids, string sourcePath)
+            System.Collections.Generic.IList<Guid> ids, string sourcePath,
+            global::Rhino.Geometry.Transform? placementXform = null)
         {
             var hit = _grid_static_currentHit; // captured at drag-start (best-effort)
             string assetId = "", baseId = "", name = "", assetType = "";
@@ -4524,6 +4545,42 @@ namespace Blendkit.Rhino
                 if (hit.Value.TryGetProperty("name", out v)) name = v.GetString() ?? "";
                 if (hit.Value.TryGetProperty("assetType", out v)) assetType = v.GetString() ?? "";
             }
+
+            // Build the proxy mesh ONCE per import — PRX path or null.
+            // The PRX is in source-authoring world space; if the import
+            // placed the asset somewhere else (drag-drop, pick-point),
+            // we duplicate + transform a single working copy so every
+            // member of the group shares it. Without this all proxies
+            // drew at world origin while the actual geometry drew at
+            // the drop point — visible misalignment on any non-origin
+            // drop.
+            global::Rhino.Geometry.Mesh sharedPrxProxy = null;
+            bool useProxor = Settings.GetBool("import_use_proxor", false);
+            if (useProxor)
+            {
+                var prxPath = Infra.ProxorLocator.FindForSourcePath(sourcePath);
+                BkLog.W($"proxy lookup: import_use_proxor=True sourcePath='{sourcePath ?? "(null)"}' -> '{prxPath ?? "(none)"}'");
+                if (!string.IsNullOrEmpty(prxPath))
+                {
+                    var raw = Infra.PrxToMesh.TryLoad(prxPath);
+                    if (raw != null)
+                    {
+                        // Duplicate so the cached canonical PRX in
+                        // PrxToMesh stays untouched — different drops
+                        // of the same asset will land at different
+                        // points and need different transformed copies.
+                        sharedPrxProxy = raw.DuplicateMesh();
+                        if (placementXform.HasValue && !placementXform.Value.IsIdentity)
+                            sharedPrxProxy.Transform(placementXform.Value);
+                        BkLog.W($"proxy lookup: PrxToMesh loaded {raw.Faces.Count} faces, transformed-copy ready for {ids.Count} target object(s)");
+                    }
+                    else
+                    {
+                        BkLog.W("proxy lookup: PrxToMesh.TryLoad returned null");
+                    }
+                }
+            }
+
             foreach (var id in ids)
             {
                 var rhObj = doc.Objects.Find(id);
@@ -4552,23 +4609,17 @@ namespace Blendkit.Rhino
                 try
                 {
                     bool attached = false;
-                    bool toggle = Settings.GetBool("import_use_proxor", false);
-                    BkLog.W($"proxy lookup: import_use_proxor={toggle} sourcePath='{sourcePath ?? "(null)"}'");
-                    if (toggle)
+                    if (sharedPrxProxy != null)
                     {
-                        var prxPath = Infra.ProxorLocator.FindForSourcePath(sourcePath);
-                        BkLog.W($"proxy lookup: ProxorLocator returned '{prxPath ?? "(none)"}'");
-                        if (!string.IsNullOrEmpty(prxPath))
-                        {
-                            var proxy = Infra.PrxToMesh.TryLoad(prxPath);
-                            BkLog.W($"proxy lookup: PrxToMesh.TryLoad → {(proxy == null ? "null" : $"mesh with {proxy.Faces.Count} faces")}");
-                            if (proxy != null
-                                && Infra.ProxyMeshService.AttachExistingProxy(rhObj.Id, proxy))
-                            {
-                                attached = true;
-                                BkLog.W($"auto-attached PRX proxy for {rhObj.Id} from {prxPath} (name='{name}')");
-                            }
-                        }
+                        // Share the same Mesh reference across every
+                        // member of this import — ProxyMeshService's
+                        // dict keys by Guid, so N entries pointing at
+                        // one Mesh is fine. The conduit ends up drawing
+                        // it once per member ID (visually overlapping;
+                        // semantically one proxy) — wasteful but cheap
+                        // for a low-poly PRX.
+                        if (Infra.ProxyMeshService.AttachExistingProxy(rhObj.Id, sharedPrxProxy))
+                            attached = true;
                     }
                     if (!attached && Infra.ProxyMeshService.ShouldAutoAttach(rhObj))
                     {
@@ -4652,7 +4703,7 @@ namespace Blendkit.Rhino
                             if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                         }
                     }
-                    StampBlenderKitMetadata(doc, liveIds, path);
+                    StampBlenderKitMetadata(doc, liveIds, path, xform);
                     doc.Views.Redraw();
                     SetStatus(res == global::Rhino.Input.GetResult.Point
                         ? $"Placed at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}"
@@ -5418,7 +5469,7 @@ namespace Blendkit.Rhino
                             if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                         }
                     }
-                    StampBlenderKitMetadata(doc, liveIds, path);
+                    StampBlenderKitMetadata(doc, liveIds, path, global::Rhino.Geometry.Transform.Identity);
                     doc.Views.Redraw();
                     SetStatus($"Imported {System.IO.Path.GetFileName(path)}.");
                     });
