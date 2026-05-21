@@ -5,7 +5,7 @@
       so the same source produces a Windows-flavoured .rhp (net7.0-windows
       for System.Drawing.Icon + Win32 hooks) and a macOS-flavoured one
       (plain net7.0, no Windows-only types). Build both with
-      `dotnet build -c Release` â€” the artefacts land in
+      `dotnet build -c Release` Ă˘â‚¬â€ť the artefacts land in
       bin/Release/net7.0-windows/ and bin/Release/net7.0/.
     -->
     <TargetFrameworks>net7.0-windows;net7.0</TargetFrameworks>
@@ -35,8 +35,8 @@
     <Title>BlenderKit</Title>
     <AssemblyTitle>BlenderKit</AssemblyTitle>
     <Product>BlenderKit</Product>
-    <Description>BlenderKit asset browser â€” Rhino 8 port.</Description>
-    <Version>0.1.2</Version>
+    <Description>BlenderKit asset browser Ă˘â‚¬â€ť Rhino 8 port.</Description>
+    <Version>0.1.3</Version>
     <Authors>BlenderKit</Authors>
     <Company>BlenderKit</Company>
     <!--
@@ -66,16 +66,16 @@
 
   <!--
     RhinoCommon comes from NuGet pinned at 8.0 (Rhino 8 GA, October 2023).
-    Pinning at 8.0 â€” instead of pointing at $(ProgramFiles)\Rhino 8\â€¦ as
-    we used to â€” lowers the Yak distribution tag from rh8_<build-machine-SR>
+    Pinning at 8.0 Ă˘â‚¬â€ť instead of pointing at $(ProgramFiles)\Rhino 8\Ă˘â‚¬Â¦ as
+    we used to Ă˘â‚¬â€ť lowers the Yak distribution tag from rh8_<build-machine-SR>
     down to rh8_0, so the package shows up in the Package Manager for
     every Rhino 8 user (not just those on the SR we happened to build
     against). The NuGet ships RhinoCommon.dll, Rhino.UI.dll, and Eto.dll
     together, so this single reference replaces every previous HintPath ref
-    on both Windows and macOS â€” no more probing for Rhino install paths,
+    on both Windows and macOS Ă˘â‚¬â€ť no more probing for Rhino install paths,
     no more dependence on the build machine's Rhino SR.
 
-    ExcludeAssets=runtime keeps these DLLs OUT of the build output â€”
+    ExcludeAssets=runtime keeps these DLLs OUT of the build output Ă˘â‚¬â€ť
     Rhino's own install ships the canonical copies, and shadowing them
     with NuGet copies would break loading at runtime. PrivateAssets=all
     prevents the dependency from leaking into anything that consumes

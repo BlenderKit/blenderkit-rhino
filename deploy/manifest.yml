@@ -4,25 +4,25 @@
 # Picked up by `yak build` (run in the deployed plugin folder, where
 # this file is copied next to the .rhp). Produces a single
 # BlenderKit-<version>-rh8_0-win.yak archive that users can install
-# inside Rhino via `_PackageManager` â†’ search "BlenderKit" â†’ Install.
+# inside Rhino via `_PackageManager` Ă˘â€ â€™ search "BlenderKit" Ă˘â€ â€™ Install.
 #
 # Bump `version` in lockstep with the .rhp's AssemblyVersion (set in
 # BlenderKitRhino.csproj <Version>). Yak refuses re-uploads of an
 # existing version; bump on every push.
 name: BlenderKit
-version: 0.1.2
+version: 0.1.3
 authors:
   - BlenderKit
 # Literal block (|) preserves newlines so the alpha warning reads as a
 # distinct paragraph in the Package Manager listing instead of getting
 # folded into the prose body that follows.
 description: |
-  âš ď¸Ź EXPERIMENTAL ALPHA â€” expect bugs, incomplete features, and
+  Ă˘ĹˇÂ ÄŹÂ¸Ĺą EXPERIMENTAL ALPHA Ă˘â‚¬â€ť expect bugs, incomplete features, and
   breaking changes between releases. Please report any issues at
   https://github.com/BlenderKit/blenderkit-rhino/issues so we can
   track and fix them.
 
-  BlenderKit asset browser for Rhino 8 â€” drag-drop access to thousands
+  BlenderKit asset browser for Rhino 8 Ă˘â‚¬â€ť drag-drop access to thousands
   of free and paid 3D models, materials, and HDR environments. Mirrors
   the Blender BlenderKit add-on: per-asset-type filters, login,
   bookmarks, ratings, and an in-Rhino preview before download.
@@ -38,7 +38,7 @@ keywords:
   - library
   - textures
   - asset-browser
-# Icon shown in the Package Manager listing â€” Yak's CLI looks for a
+# Icon shown in the Package Manager listing Ă˘â‚¬â€ť Yak's CLI looks for a
 # file at this relative path inside the package directory. The deploy
-# script puts our 296Ă—296 logo PNG here as `icon.png`.
+# script puts our 296Ä‚â€”296 logo PNG here as `icon.png`.
 icon: icon.png
