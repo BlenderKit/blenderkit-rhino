@@ -117,11 +117,11 @@ if exist "%YAK_INSTALL%" (
     rmdir /S /Q "%YAK_INSTALL%" 2>nul
     if exist "%YAK_INSTALL%" (
         echo [deploy] WARNING: could not fully remove Yak install at %YAK_INSTALL%
-        echo [deploy]          (a process is still holding files open; rerun after
-        echo [deploy]          closing Rhino + any blenderkit-client*.exe).
+        echo [deploy]          a process is still holding files open; rerun after
+        echo [deploy]          closing Rhino + any blenderkit-client*.exe.
     ) else (
         echo [deploy] Removed Yak-installed copy at %YAK_INSTALL%
-        echo [deploy]   ^(rhino was loading that one in preference to your deploy^)
+        echo [deploy]   rhino was loading that one in preference to your deploy
     )
 )
 
