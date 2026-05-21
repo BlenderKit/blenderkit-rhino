@@ -201,11 +201,12 @@ namespace Blendkit.Rhino.Tests
         }
 
         [Fact]
-        public void ProxorLocator_prefers_prxc_over_prx()
+        public void ProxorLocator_prefers_prxc_over_prx_on_stem_match()
         {
-            // When both extensions exist next to the source path, the
-            // binary (.prxc) variant wins — it's the canonical shipped
-            // format. Hand-make both and verify the choice.
+            // When both extensions exist next to the source path with
+            // the SAME stem, the binary (.prxc) variant wins — it's
+            // the canonical shipped format. This is the fast happy
+            // path before the sibling-scan fallback.
             var dir = Path.Combine(Path.GetTempPath(), "prx-locator-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             try
@@ -219,6 +220,65 @@ namespace Blendkit.Rhino.Tests
 
                 var picked = ProxorLocator.FindForSourcePath(source);
                 Assert.Equal(prxc, picked);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void ProxorLocator_finds_sibling_prxc_with_different_stem()
+        {
+            // The actual BlenderKit layout: .glb and .prxc share the
+            // asset directory but have different UUID stems
+            // (verified against the live cache — a flower-hp asset
+            // had a .glb stemmed flower-hp_ab834807-… and a .prxc
+            // stemmed 6bdcc5fb-… in the same folder). The locator
+            // must scan the directory for *.prxc and adopt the unique
+            // sibling.
+            var dir = Path.Combine(Path.GetTempPath(), "prx-locator-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var source = Path.Combine(dir, "flower-hp_aaaaaaaa-1111-2222-3333-444444444444.glb");
+                var prxc   = Path.Combine(dir, "6bdcc5fb-bbbb-cccc-dddd-eeeeeeeeeeee.prxc");
+                File.WriteAllText(source, "stub");
+                File.WriteAllText(prxc,   "stub");
+
+                var picked = ProxorLocator.FindForSourcePath(source);
+                Assert.Equal(prxc, picked);
+            }
+            finally
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+
+        [Fact]
+        public void ProxorLocator_with_multiple_prxc_picks_newest_by_mtime()
+        {
+            // Defensive: if an asset directory ends up with two .prxc
+            // files (manual download, re-upload, ...), pick the most
+            // recent so the user gets the latest variant. The
+            // alternative is to fail — but a best-effort proxy is
+            // better than nothing.
+            var dir = Path.Combine(Path.GetTempPath(), "prx-locator-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var source = Path.Combine(dir, "asset.glb");
+                var older  = Path.Combine(dir, "older.prxc");
+                var newer  = Path.Combine(dir, "newer.prxc");
+                File.WriteAllText(source, "stub");
+                File.WriteAllText(older,  "stub");
+                System.Threading.Thread.Sleep(50); // ensure mtime differs on FS that round-mtime-to-second
+                File.WriteAllText(newer,  "stub");
+                File.SetLastWriteTimeUtc(older, DateTime.UtcNow.AddHours(-2));
+                File.SetLastWriteTimeUtc(newer, DateTime.UtcNow);
+
+                var picked = ProxorLocator.FindForSourcePath(source);
+                Assert.Equal(newer, picked);
             }
             finally
             {
