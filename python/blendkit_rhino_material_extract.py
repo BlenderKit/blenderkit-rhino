@@ -1,4 +1,4 @@
-"""Headless: BlenderKit material .blend -> JSON manifest for the Rhino plug-in.
+"""Headless: Blendkit material .blend -> JSON manifest for the Rhino plug-in.
 
 Run as a Blender background script:
     blender --background <blend> --python <this> -- <out_json>
@@ -16,8 +16,8 @@ Output (one Principled BSDF flattened):
       "alpha_texture":     ...,  "alpha":             ...
     }
 
-For BlenderKit material assets the texture files are usually packed
-inside the .blend (single-file delivery). We use the BlenderKit Blender
+For Blendkit material assets the texture files are usually packed
+inside the .blend (single-file delivery). We use the Blendkit Blender
 addon's canonical unpacking pattern (lifted from
 blenderkit/unpack_asset_bg.py: get_texture_filepath +
 image.unpack(method='WRITE_ORIGINAL')) so the disk layout matches what

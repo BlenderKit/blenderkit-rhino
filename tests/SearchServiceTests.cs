@@ -424,7 +424,7 @@ namespace Blendkit.Rhino.Tests
         [Fact]
         public void Category_url_encoded_for_non_ascii_slugs()
         {
-            // Some BlenderKit categories carry non-ASCII slugs. The server
+            // Some Blendkit categories carry non-ASCII slugs. The server
             // rejects raw unicode in `+category_subtree:`, so we URL-encode.
             var f = Empty();
             f.Category = "café-things";

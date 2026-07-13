@@ -7,7 +7,7 @@ namespace Blendkit.Rhino.Tests
 {
     /// <summary>
     /// PKCE (RFC 7636) conformance for our OAuth flow against
-    /// blenderkit.com. The login round-trip will reject mismatched challenges
+    /// blendkit.com. The login round-trip will reject mismatched challenges
     /// silently with a 400 from the OAuth server, so it pays to lock down
     /// the verifier/challenge contract here.
     /// </summary>

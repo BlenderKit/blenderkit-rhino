@@ -30,7 +30,7 @@ namespace Blendkit.Rhino.Infra
         // "model" / "material" / "hdr" — used to pick the right
         // post-download pipeline (geometry vs material vs environment).
         public string AssetType = "model";
-        // Canonical BlenderKit UUID for the asset. Used as the cache key
+        // Canonical Blendkit UUID for the asset. Used as the cache key
         // for the InstanceDefinition reuse fast path — once the user
         // drops an asset once we keep its block around so further drops
         // of the same asset_base_id can skip both the download and the

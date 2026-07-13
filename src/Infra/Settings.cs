@@ -11,6 +11,12 @@ namespace Blendkit.Rhino.Infra
     /// API token). Keep all keys in one file so a fresh install can be set up
     /// by copying one path; keep the schema flat so we can grow it without
     /// migrations.
+    ///
+    /// NB: the folder stays "BlenderKit" (not "Blendkit") on purpose after
+    /// the brand rename — this config file is shared with the Blender
+    /// add-on (see python/blendkit_rhino/preferences.py) and with existing
+    /// installs' saved login/token. Renaming it would orphan that state and
+    /// desync from the Blender side.
     /// </summary>
     public static class Settings
     {

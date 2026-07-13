@@ -7,7 +7,7 @@ using Rhino.UI;
 namespace Blendkit.Rhino
 {
     /// <summary>
-    /// Command: `BlenderKit` — toggles the dockable panel on/off.
+    /// Command: `Blendkit` — toggles the dockable panel on/off.
     /// Mirrors Blender's "show/hide N-panel" for the addon.
     /// </summary>
     [Guid("7c8f2de1-0e0c-4a9c-8f44-78a5de3a1f12")]
@@ -15,7 +15,7 @@ namespace Blendkit.Rhino
     {
         public BlendkitCommand() { Instance = this; }
         public static BlendkitCommand Instance { get; private set; }
-        public override string EnglishName => "BlenderKit";
+        public override string EnglishName => "Blendkit";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {

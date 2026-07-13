@@ -230,7 +230,7 @@ namespace Blendkit.Rhino.Tests
         [Fact]
         public void ProxorLocator_finds_sibling_prxc_with_different_stem()
         {
-            // The actual BlenderKit layout: .glb and .prxc share the
+            // The actual Blendkit layout: .glb and .prxc share the
             // asset directory but have different UUID stems
             // (verified against the live cache — a flower-hp asset
             // had a .glb stemmed flower-hp_ab834807-… and a .prxc

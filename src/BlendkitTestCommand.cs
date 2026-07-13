@@ -9,10 +9,10 @@ namespace Blendkit.Rhino
 {
     /// <summary>
     /// Self-test command. Usage:
-    ///     _BlenderKitTest                  → query "chair"
-    ///     _BlenderKitTest car              → query "car"
+    ///     _BlendkitTest                  → query "chair"
+    ///     _BlendkitTest car              → query "car"
     ///
-    /// What it does: opens the BlenderKit panel, kicks off a search for the
+    /// What it does: opens the Blendkit panel, kicks off a search for the
     /// given query, and tells the panel to auto-download + import the first
     /// result. Progress streams to ~/blenderkit_data/client/rhino_panel.log.
     /// Lets a CI / iteration loop verify the full pipeline without manual UI
@@ -23,15 +23,15 @@ namespace Blendkit.Rhino
     {
         public BlendkitTestCommand() { Instance = this; }
         public static BlendkitTestCommand Instance { get; private set; }
-        public override string EnglishName => "BlenderKitTest";
+        public override string EnglishName => "BlendkitTest";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             // Default exercises the model pipeline.
             BlendkitPlugIn.TestQuery = "chair";
             BlendkitPlugIn.TestAssetType = "MODEL";
-            BkLog.StartSession($"BlenderKitTest query=chair type=MODEL");
-            BkLog.W("BlenderKitTest invoked: model pipeline");
+            BkLog.StartSession($"BlendkitTest query=chair type=MODEL");
+            BkLog.W("BlendkitTest invoked: model pipeline");
             OpenPanel();
             return Result.Success;
         }
@@ -53,19 +53,19 @@ namespace Blendkit.Rhino
         }
     }
 
-    /// <summary>Same as BlenderKitTest but exercises the MATERIAL pipeline:
+    /// <summary>Same as BlendkitTest but exercises the MATERIAL pipeline:
     /// downloads a wood material, runs the .blend → JSON extractor, and
     /// imports as a Rhino PBR material.</summary>
     [Guid("e2f5b430-7a90-4a51-902d-1f0c61d3a812")]
     public class BlendkitTestMaterialCommand : BlendkitTestCommand
     {
-        public override string EnglishName => "BlenderKitTestMaterial";
+        public override string EnglishName => "BlendkitTestMaterial";
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             BlendkitPlugIn.TestQuery = "wood";
             BlendkitPlugIn.TestAssetType = "MATERIAL";
-            BkLog.StartSession("BlenderKitTestMaterial query=wood");
-            BkLog.W("BlenderKitTestMaterial invoked: material pipeline");
+            BkLog.StartSession("BlendkitTestMaterial query=wood");
+            BkLog.W("BlendkitTestMaterial invoked: material pipeline");
             OpenPanel();
             return Result.Success;
         }
@@ -76,13 +76,13 @@ namespace Blendkit.Rhino
     [Guid("c3d8a210-4e6b-4f79-9b1e-5a07f12c8e44")]
     public class BlendkitTestHdrCommand : BlendkitTestCommand
     {
-        public override string EnglishName => "BlenderKitTestHdr";
+        public override string EnglishName => "BlendkitTestHdr";
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
             BlendkitPlugIn.TestQuery = "sky";
             BlendkitPlugIn.TestAssetType = "HDR";
-            BkLog.StartSession("BlenderKitTestHdr query=sky");
-            BkLog.W("BlenderKitTestHdr invoked: HDR pipeline");
+            BkLog.StartSession("BlendkitTestHdr query=sky");
+            BkLog.W("BlendkitTestHdr invoked: HDR pipeline");
             OpenPanel();
             return Result.Success;
         }

@@ -68,7 +68,7 @@ def build_payload(state: SearchState, api_key: str, addon_version: str) -> dict[
 
 
 def _url_query(state: SearchState) -> str:
-    """Build the blenderkit.com-style URL query string the server expects."""
+    """Build the blendkit.com-style URL query string the server expects."""
     parts = [f"query={state.query}"] if state.query else []
     parts.append(f"asset_type={state.asset_type.lower()}")
     f = state.filters

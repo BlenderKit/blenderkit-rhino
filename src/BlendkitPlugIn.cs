@@ -15,7 +15,7 @@ using Blendkit.Rhino.Infra;
 namespace Blendkit.Rhino
 {
     /// <summary>
-    /// BlenderKit for Rhino 8 — plugin entry point.
+    /// Blendkit for Rhino 8 — plugin entry point.
     /// Registers the dockable panel and ensures a Go client is running.
     /// </summary>
     [Guid("3f1c9d20-2e6b-4a0c-9d5f-1b7a2e4d4f01")]
@@ -28,7 +28,7 @@ namespace Blendkit.Rhino
         /// Singleton display conduit that swaps decimated proxies in for
         /// imported meshes in non-rendered viewport modes. Lifecycle is
         /// tied to OnLoad/OnShutdown — Active toggles via the
-        /// BlenderKitProxy command without losing the cached proxies.
+        /// BlendkitProxy command without losing the cached proxies.
         /// See <see cref="Infra.ProxyDisplayConduit"/> for the draw logic.
         /// </summary>
         public Infra.ProxyDisplayConduit ProxyConduit { get; private set; }
@@ -53,7 +53,7 @@ namespace Blendkit.Rhino
             {
                 // Bootstrap autonomous test runs from an env var. Rhino's
                 // /runscript fires before plugins load, so the
-                // BlenderKitTest* commands invoked that way never reached
+                // BlendkitTest* commands invoked that way never reached
                 // their RunCommand handler. Reading BLENDERKIT_AUTOTEST
                 // here in OnLoad gives the same effect with a guarantee
                 // that the panel sees TestQuery on first paint.
@@ -96,7 +96,7 @@ namespace Blendkit.Rhino
                         RhinoApp.InvokeOnUiThread((Action)(() =>
                         {
                             try { Panels.OpenPanel(BlendkitPanel.PanelId); }
-                            catch (Exception ex) { RhinoApp.WriteLine($"[BlenderKit] AUTOTEST OpenPanel failed: {ex.Message}"); }
+                            catch (Exception ex) { RhinoApp.WriteLine($"[Blendkit] AUTOTEST OpenPanel failed: {ex.Message}"); }
                         }));
                     });
                 }
@@ -106,20 +106,20 @@ namespace Blendkit.Rhino
                 // ObjectCulling + PreDrawObjects hooks start firing for
                 // that object in non-rendered viewport modes. See
                 // ProxyMeshService for the cache + decimation entry points
-                // and BlenderKitProxy for the user-facing command.
+                // and BlendkitProxy for the user-facing command.
                 try
                 {
                     ProxyConduit = new Infra.ProxyDisplayConduit { Enabled = true, Active = true };
                 }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] proxy conduit init failed: {ex.Message}");
+                    RhinoApp.WriteLine($"[Blendkit] proxy conduit init failed: {ex.Message}");
                 }
 
                 RegisterPanel();
                 // First-run toolbar load. Plugin authors who want a
-                // one-click "open BlenderKit panel" toolbar button
-                // ship a BlenderKit.rui (authored once via Tools >
+                // one-click "open Blendkit panel" toolbar button
+                // ship a Blendkit.rui (authored once via Tools >
                 // Toolbar Layout in Rhino) next to the .rhp. We open
                 // it via the scripted -Toolbar command on the FIRST
                 // launch only and then drop a stamp file so the
@@ -133,21 +133,21 @@ namespace Blendkit.Rhino
                     var asmDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
                     if (!string.IsNullOrEmpty(asmDir))
                     {
-                        var rui = Path.Combine(asmDir, "BlenderKit.rui");
+                        var rui = Path.Combine(asmDir, "Blendkit.rui");
                         var stampDir = Path.Combine(DefaultGlobalDir, "client");
                         Directory.CreateDirectory(stampDir);
-                        var stamp = Path.Combine(stampDir, "BlenderKit.rui.loaded");
+                        var stamp = Path.Combine(stampDir, "Blendkit.rui.loaded");
                         if (File.Exists(rui) && !File.Exists(stamp))
                         {
                             RhinoApp.RunScript($"_-Toolbar _Open \"{rui}\" _Enter", false);
                             try { File.WriteAllText(stamp, DateTime.UtcNow.ToString("o")); } catch { }
-                            RhinoApp.WriteLine("[BlenderKit] BlenderKit toolbar loaded — drag the icon onto any toolbar group.");
+                            RhinoApp.WriteLine("[Blendkit] Blendkit toolbar loaded — drag the icon onto any toolbar group.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] toolbar auto-load failed: {ex.Message}");
+                    RhinoApp.WriteLine($"[Blendkit] toolbar auto-load failed: {ex.Message}");
                 }
                 // Never block the UI thread during load. Go client discovery
                 // can take several seconds; run it on a background task and
@@ -155,13 +155,13 @@ namespace Blendkit.Rhino
                 Task.Run(() =>
                 {
                     try { EnsureGoClient(); }
-                    catch (Exception ex) { RhinoApp.WriteLine($"[BlenderKit] client boot error: {ex.Message}"); }
+                    catch (Exception ex) { RhinoApp.WriteLine($"[Blendkit] client boot error: {ex.Message}"); }
                 });
                 return LoadReturnCode.Success;
             }
             catch (Exception ex)
             {
-                errorMessage = $"BlenderKit failed to load: {ex.Message}";
+                errorMessage = $"Blendkit failed to load: {ex.Message}";
                 return LoadReturnCode.ErrorShowDialog;
             }
         }
@@ -174,7 +174,7 @@ namespace Blendkit.Rhino
 
         private void RegisterPanel()
         {
-            // Load the BlenderKit logo embedded in this assembly and feed it
+            // Load the Blendkit logo embedded in this assembly and feed it
             // to Rhino so the panel tab + Panel Bar show our icon next to
             // (e.g.) the Grasshopper one. The PNG was embedded at build time
             // via <EmbeddedResource> in the csproj.
@@ -218,13 +218,13 @@ namespace Blendkit.Rhino
                 }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] couldn't load panel icon: {ex.Message}");
+                    RhinoApp.WriteLine($"[Blendkit] couldn't load panel icon: {ex.Message}");
                 }
             }
             // Version goes in the panel name itself so we don't waste a
             // row of panel content on a banner. Bump in lockstep with
             // the OnLoad version reported to the Go client.
-            Panels.RegisterPanel(this, typeof(BlendkitPanel), "BlenderKit v0.1", icon);
+            Panels.RegisterPanel(this, typeof(BlendkitPanel), "Blendkit v0.1", icon);
         }
 
         // Bound on auto-respawns within a single Rhino session. The poller
@@ -259,12 +259,12 @@ namespace Blendkit.Rhino
             var existing = ClientLib.DiscoverPortAsync().GetAwaiter().GetResult();
             if (existing != null)
             {
-                RhinoApp.WriteLine($"[BlenderKit] Found existing Go client on port {existing}.");
+                RhinoApp.WriteLine($"[Blendkit] Found existing Go client on port {existing}.");
                 return;
             }
             if (_autoRespawnCount >= MaxAutoRespawns)
             {
-                RhinoApp.WriteLine($"[BlenderKit] Hit auto-respawn cap ({MaxAutoRespawns}). Restart Rhino to retry.");
+                RhinoApp.WriteLine($"[Blendkit] Hit auto-respawn cap ({MaxAutoRespawns}). Restart Rhino to retry.");
                 return;
             }
             _autoRespawnCount++;
@@ -284,7 +284,7 @@ namespace Blendkit.Rhino
             }
 
             // Step 2: spawn our own. We ship the Go client under the same
-            // descriptive filename the BlenderKit Blender add-on uses
+            // descriptive filename the Blendkit Blender add-on uses
             // (`blenderkit-client-<os>-<arch>(.exe)`, where os is one of
             // {windows,macos,linux} and arch is one of {x86_64,arm64}).
             // Mirrors `decide_client_binary_name()` in the add-on's
@@ -304,7 +304,7 @@ namespace Blendkit.Rhino
             }
             if (string.IsNullOrEmpty(clientExe))
             {
-                RhinoApp.WriteLine($"[BlenderKit] Go client binary missing under {Path.Combine(asmDir, "client")}.");
+                RhinoApp.WriteLine($"[Blendkit] Go client binary missing under {Path.Combine(asmDir, "client")}.");
                 return;
             }
 
@@ -314,7 +314,7 @@ namespace Blendkit.Rhino
 
             var args =
                 "--port 62485 " +
-                "--server https://www.blenderkit.com " +
+                "--server https://www.blendkit.com " +
                 "--proxy_which SYSTEM " +
                 "--ssl_context ENABLED " +
                 "--version 0.1.0 " +
@@ -333,7 +333,7 @@ namespace Blendkit.Rhino
             };
             _clientProcess = Process.Start(psi);
             _clientSpawned = true;
-            RhinoApp.WriteLine($"[BlenderKit] Go client spawned (pid={_clientProcess?.Id}). Log: {logPath}");
+            RhinoApp.WriteLine($"[Blendkit] Go client spawned (pid={_clientProcess?.Id}). Log: {logPath}");
 
             // Pipe stdout/stderr into the log file so crash causes are visible.
             var logStream = File.Open(logPath, FileMode.Append, FileAccess.Write, FileShare.Read);
@@ -351,24 +351,24 @@ namespace Blendkit.Rhino
                 var port = ClientLib.DiscoverPortAsync().GetAwaiter().GetResult();
                 if (port != null)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] Go client ready on port {port}.");
+                    RhinoApp.WriteLine($"[Blendkit] Go client ready on port {port}.");
                     return;
                 }
                 if (_clientProcess.HasExited)
                 {
                     RhinoApp.WriteLine(
-                        $"[BlenderKit] Go client exited early (code {_clientProcess.ExitCode}). See {logPath}.");
+                        $"[Blendkit] Go client exited early (code {_clientProcess.ExitCode}). See {logPath}.");
                     return;
                 }
             }
-            RhinoApp.WriteLine("[BlenderKit] Go client didn't answer within 5s — see log.");
+            RhinoApp.WriteLine("[Blendkit] Go client didn't answer within 5s — see log.");
         }
 
         private void StopGoClient()
         {
             if (_clientProcess == null || _clientProcess.HasExited) return;
             try { _clientProcess.Kill(); _clientProcess.WaitForExit(3000); }
-            catch (Exception ex) { RhinoApp.WriteLine($"[BlenderKit] Kill failed: {ex.Message}"); }
+            catch (Exception ex) { RhinoApp.WriteLine($"[Blendkit] Kill failed: {ex.Message}"); }
         }
 
         /// <summary>

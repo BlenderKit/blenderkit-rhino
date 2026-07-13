@@ -1,6 +1,6 @@
-# BlenderKit for Rhino 8
+# Blendkit for Rhino 8
 
-Rhino 8 port of the [BlenderKit](https://www.blenderkit.com/) asset browser.
+Rhino 8 port of the [Blendkit](https://www.blendkit.com/) asset browser.
 
 - Search, filters, categories, download, import, rating, bookmarks.
 - Comments and notifications open on the website in a browser.
@@ -27,10 +27,13 @@ for the architecture and the list of spikes to validate before filling out the f
 └── tests/                 # xUnit tests (CI-runnable, no Rhino required)
 ```
 
-The user-visible name (panel title, command names, package title) stays
-**BlenderKit** — only internal identifiers (namespace, classes, file
-names, assembly) are `Blendkit` to keep the repo self-contained while
-preserving brand continuity for end users.
+Everything — the user-visible name (panel title, command names, package
+title) and the internal identifiers (namespace `Blendkit.Rhino`, classes,
+file names, assembly `BlendkitRhino`) — is **Blendkit**, the current
+company/brand name (formerly **BlenderKit**). The plug-in GUID and the
+shared on-disk interop paths (`~/blenderkit_data`, `%APPDATA%\BlenderKit\
+config.json`) deliberately keep the old spelling so existing installs and
+the Blender add-on's shared cache/config keep working.
 
 ### Where the Go client lives
 
@@ -63,10 +66,10 @@ still expects a pre-built `client.exe`.
    `BLENDKIT_CLIENT_DIR` to point at it.
 3. Run `deploy/deploy_rhino.bat` (Windows) or `deploy/deploy_rhino.sh`
    (macOS) to build the .rhp and copy artifacts into Rhino's plug-ins
-   folder (e.g. `%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\BlenderKit\`).
+   folder (e.g. `%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit\`).
    On macOS the script also mirrors the deploy into the Yak-installed
    package dir under `~/Library/Application Support/McNeel/Rhinoceros/
-   packages/8.0/BlenderKit/<version>/` if one exists, since Rhino
+   packages/8.0/Blendkit/<version>/` if one exists, since Rhino
    loads the Yak copy in preference to `Plug-ins/`. Pass `--noyak` to
    skip that mirror.
 4. First install only: Rhino → Tools → Options → Plug-ins → Install...
@@ -114,7 +117,7 @@ into the local plug-ins folder.
 If you only need to rebuild the macOS `.yak` (e.g. you fixed
 something Mac-specific between releases without bumping the
 version), run `deploy\pack_mac.bat` directly. It produces
-`build\Release\packages\blenderkit-<version>-rh8_0-mac.yak`,
+`build\Release\packages\blendkit-<version>-rh8_0-mac.yak`,
 which you can then `yak push` manually. The packer also patches
 the zip's `external_attr` on `client/client` to `0o100755` so
 the Mach-O binary is executable on the user's Mac — `yak.exe`

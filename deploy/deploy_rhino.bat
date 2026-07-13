@@ -1,5 +1,5 @@
 @echo off
-REM BlenderKit for Rhino 8 — dev deploy script.
+REM Blendkit for Rhino 8 — dev deploy script.
 REM
 REM Copies the plugin into Rhino's Plug-ins folder so you can iterate.
 REM Rhino does NOT reload plugins cleanly — restart Rhino after each deploy.
@@ -34,7 +34,7 @@ if not defined CLIENT_DIR set CLIENT_DIR=%RHINO_DIR%\..\..\source_blenderkit_add
 
 REM REPO_ROOT kept as an alias for any callers that still reference it.
 set REPO_ROOT=%RHINO_DIR%\..
-set TARGET=%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\BlenderKit
+set TARGET=%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit
 set RHINO_EXE=C:\Program Files\Rhino 8\System\Rhino.exe
 set YAK_EXE=C:\Program Files\Rhino 8\System\Yak.exe
 set DO_BUILD=1
@@ -67,7 +67,7 @@ if "%DO_KILL_RHINO%"=="1" (
 
 echo.
 echo ==================================================
-echo  BlenderKit for Rhino 8 - deploy
+echo  Blendkit for Rhino 8 - deploy
 echo ==================================================
 echo  rhino dir : %RHINO_DIR%
 echo  repo root : %REPO_ROOT%
@@ -79,7 +79,7 @@ if not exist "%TARGET%\python"  mkdir "%TARGET%\python"
 if not exist "%TARGET%\client"  mkdir "%TARGET%\client"
 
 REM ---- Purge stale .rhp files from previous builds ----
-REM Both the pre-rename build (BlenderKitRhino.rhp) and the new
+REM Both the pre-rename build (BlendkitRhino.rhp) and the new
 REM build (BlendkitRhino.rhp) share the same plug-in GUID, so if
 REM both end up in the folder Rhino can load whichever it indexed
 REM first. Delete every .rhp that isn't the one we're about to
@@ -96,9 +96,9 @@ for %%R in ("%TARGET%\*.rhp") do (
 )
 
 REM ---- Purge Yak-installed copies (GUID-collision shadow) ----
-REM Anyone who's installed BlenderKit via Rhino's `_PackageManager` ends
+REM Anyone who's installed Blendkit via Rhino's `_PackageManager` ends
 REM up with the .rhp at
-REM   %APPDATA%\McNeel\Rhinoceros\packages\8.0\BlenderKit\<version>\
+REM   %APPDATA%\McNeel\Rhinoceros\packages\8.0\Blendkit\<version>\
 REM as well as our dev copy at %TARGET%. Both .rhp files have the SAME
 REM plug-in GUID (the [Guid("3f1c...")] attribute on BlendkitPlugIn),
 REM so Rhino loads whichever its scanner sees first — typically the
@@ -107,12 +107,12 @@ REM installed from yak. The dev deploy then has zero effect on the
 REM running Rhino, which silently shows old behaviour ("I changed
 REM the code and nothing changed at runtime"). Painful debugging.
 REM
-REM This block deletes the entire packages\8.0\BlenderKit directory
+REM This block deletes the entire packages\8.0\Blendkit directory
 REM so the loader sees only our deploy at %TARGET%. Subsequent
 REM `_PackageManager` opens won't re-download until the user clicks
 REM Install on a yak listing again, which is the right tradeoff for
 REM a dev who's actively iterating.
-set YAK_INSTALL=%APPDATA%\McNeel\Rhinoceros\packages\8.0\BlenderKit
+set YAK_INSTALL=%APPDATA%\McNeel\Rhinoceros\packages\8.0\Blendkit
 if exist "%YAK_INSTALL%" (
     rmdir /S /Q "%YAK_INSTALL%" 2>nul
     if exist "%YAK_INSTALL%" (
@@ -220,13 +220,13 @@ if exist "%CLIENT_DIR%\tools" (
     echo [deploy]       Update the Blender add-on checkout or set BLENDKIT_CLIENT_DIR.
 )
 
-REM ---- Optional: BlenderKit.rui toolbar file ----
-REM If a BlenderKit.rui has been authored once via Tools ^> Toolbar Layout
+REM ---- Optional: Blendkit.rui toolbar file ----
+REM If a Blendkit.rui has been authored once via Tools ^> Toolbar Layout
 REM in Rhino and saved next to the project, copy it alongside the .rhp.
 REM The plugin's OnLoad picks it up on first run via -Toolbar _Open.
-if exist "%RHINO_DIR%\deploy\BlenderKit.rui" (
-    copy /Y "%RHINO_DIR%\deploy\BlenderKit.rui" "%TARGET%\BlenderKit.rui" >nul
-    echo [deploy] Toolbar file BlenderKit.rui copied.
+if exist "%RHINO_DIR%\deploy\Blendkit.rui" (
+    copy /Y "%RHINO_DIR%\deploy\Blendkit.rui" "%TARGET%\Blendkit.rui" >nul
+    echo [deploy] Toolbar file Blendkit.rui copied.
 )
 
 REM ---- YAK package metadata (manifest + listing icon) ----
@@ -251,7 +251,7 @@ echo.
 REM ---- Optional: build a .yak package for Package Manager publish ----
 REM Run with `--pack` to produce a redistributable archive. Yak.exe
 REM scans the working directory for manifest.yml and zips every
-REM sibling file into BlenderKit-<version>-rh8_0-win.yak. The output
+REM sibling file into blendkit-<version>-rh8_0-win.yak. The output
 REM lands in %RHINO_DIR%\build\Release\packages\ where the launching
 REM Bash session can grab it for upload.
 if "%DO_PACK%"=="1" (
@@ -293,8 +293,8 @@ echo   1. Start Rhino 8 (or use --launch next time).
 echo   2. First install only:
 echo        Tools ^> Options ^> Plug-ins ^> Install...
 echo        select: %TARGET%\BlendkitRhino.rhp
-echo   3. Run the command: _BlenderKit
-echo      (or enable 'BlenderKit' in the panel list)
+echo   3. Run the command: _Blendkit
+echo      (or enable 'Blendkit' in the panel list)
 echo.
 
 if "%DO_LAUNCH%"=="1" (

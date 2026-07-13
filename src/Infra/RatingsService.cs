@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// Wrapper for the BlenderKit rating endpoints exposed by the Go client.
+    /// Wrapper for the Blendkit rating endpoints exposed by the Go client.
     /// Bookmarks are modeled server-side as a rating with type "bookmarks"
     /// and value 1 (set) / 0 (clear), matching what the Blender addon does.
     /// </summary>
@@ -14,7 +14,7 @@ namespace Blendkit.Rhino.Infra
         public static Task<JsonElement> SetBookmarkAsync(string assetId, bool bookmarked, string apiKey)
             => SendRatingAsync(assetId, "bookmarks", bookmarked ? 1 : 0, apiKey);
 
-        // BlenderKit's quality rating is on a 1-10 scale (not 1-5 stars).
+        // Blendkit's quality rating is on a 1-10 scale (not 1-5 stars).
         // Web UI usually shows it as 5 half-star slots → 10 increments.
         public static Task<JsonElement> SendQualityAsync(string assetId, int rating1To10, string apiKey)
             => SendRatingAsync(assetId, "quality", rating1To10, apiKey);

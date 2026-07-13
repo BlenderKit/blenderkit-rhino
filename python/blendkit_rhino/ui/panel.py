@@ -1,6 +1,6 @@
 """Main dockable panel layout.
 
-The C# shell instantiates a `BlenderKitPanel` (Eto.Forms.Panel). This module
+The C# shell instantiates a `BlendkitPanel` (Eto.Forms.Panel). This module
 supplies the panel body when the Python bridge is wired up.
 
 Layout (top → bottom):
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 
 def build_panel_content():
-    """Build and return an Eto control to host inside the C# BlenderKitPanel.
+    """Build and return an Eto control to host inside the C# BlendkitPanel.
 
     Must be called from inside Rhino (Eto is only available there).
     """
@@ -38,7 +38,7 @@ def build_panel_content():
     layout.Spacing = Size(0, 6)
 
     title = Label()
-    title.Text = "BlenderKit for Rhino — v0.1"
+    title.Text = "Blendkit for Rhino — v0.1"
     layout.AddRow(title)
 
     asset_type = DropDown()

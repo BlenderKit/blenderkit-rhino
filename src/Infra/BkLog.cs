@@ -41,7 +41,7 @@ namespace Blendkit.Rhino.Infra
         {
             try
             {
-                global::Rhino.RhinoApp.WriteLine("[BlenderKit] " + msg);
+                global::Rhino.RhinoApp.WriteLine("[Blendkit] " + msg);
             }
             catch { /* outside Rhino in tests */ }
             try

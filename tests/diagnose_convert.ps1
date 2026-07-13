@@ -1,4 +1,4 @@
-﻿# diagnose_convert.ps1 — health-check the BlenderKit convert pipeline
+﻿# diagnose_convert.ps1 — health-check the Blendkit convert pipeline
 # from outside Rhino. Run any time the Rhino plug-in's status bar shows
 # "Convert request failed: Response status code does not indicate success".
 #
@@ -144,8 +144,8 @@ foreach ($port in $candidatePorts) {
 if ($live.Count -eq 0) {
     Write-Host 'DIAGNOSIS: no BlenderKit-Client is running on any candidate port.' -ForegroundColor Red
     Write-Host '           - If Rhino is open, the plug-in should be spawning one — check'
-    Write-Host "             %APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\BlenderKit\client\client.exe"
-    Write-Host '           - Or start Blender with the BlenderKit add-on enabled.'
+    Write-Host "             %APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit\client\client.exe"
+    Write-Host '           - Or start Blender with the Blendkit add-on enabled.'
     exit 2
 }
 
@@ -177,9 +177,9 @@ Write-Host 'with older Blender add-on releases (e.g. v1.8.3 from add-on v3.19.x)
 Write-Host 'which is exactly what causes "Convert request failed: 404 Not Found" in the Rhino panel.'
 Write-Host ''
 Write-Host 'Fix options, simplest first:' -ForegroundColor Yellow
-Write-Host '  1. Close Blender (or unenable the BlenderKit add-on there) — the Rhino plug-in will'
+Write-Host '  1. Close Blender (or unenable the Blendkit add-on there) — the Rhino plug-in will'
 Write-Host '     then spawn its own newer client on the same port.'
-Write-Host '  2. Update the Blender BlenderKit add-on to a build that ships client >= v1.9.0.'
+Write-Host '  2. Update the Blender Blendkit add-on to a build that ships client >= v1.9.0.'
 Write-Host '  3. Long-term plug-in fix: ClientLib.DiscoverPortAsync should reject a discovered'
 Write-Host '     client that returns 404 on /run_blender_script and try the next candidate.'
 exit 1

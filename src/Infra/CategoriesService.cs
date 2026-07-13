@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// Holds the BlenderKit category tree fetched by the Go client.
+    /// Holds the Blendkit category tree fetched by the Go client.
     ///
     /// The tree lives in process-static state because the API is the same for
     /// every panel instance and refetching is wasteful.

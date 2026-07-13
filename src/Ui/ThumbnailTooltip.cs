@@ -267,7 +267,7 @@ namespace Blendkit.Rhino.Ui
             }
             catch (Exception ex)
             {
-                global::Rhino.RhinoApp.WriteLine("[BlenderKit][tooltip] " + ex.Message);
+                global::Rhino.RhinoApp.WriteLine("[Blendkit][tooltip] " + ex.Message);
             }
         }
 

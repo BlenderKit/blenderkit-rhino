@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// One BlenderKit search tab. The panel keeps a list of these and
+    /// One Blendkit search tab. The panel keeps a list of these and
     /// swaps the active one's state into the visible UI controls when the
     /// user clicks a tab. Mirrors the Blender addon's multi-tab asset bar
     /// (Ctrl+T new tab, Ctrl+W close, etc.).

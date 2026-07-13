@@ -50,7 +50,7 @@ def discover_port(timeout: float = 0.5) -> int | None:
             req = urllib.request.Request(f"http://127.0.0.1:{port}/", method="GET")
             with urllib.request.urlopen(req, timeout=timeout):
                 _active_port = port
-                log.info("BlenderKit client found on port %d", port)
+                log.info("Blendkit client found on port %d", port)
                 return port
         except (urllib.error.URLError, OSError):
             continue
@@ -61,7 +61,7 @@ def _request(method: str, path: str, payload: dict[str, Any] | None = None,
              timeout: float = 30.0) -> dict[str, Any]:
     if _active_port is None:
         if discover_port() is None:
-            raise RuntimeError("No BlenderKit client reachable on any candidate port.")
+            raise RuntimeError("No Blendkit client reachable on any candidate port.")
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
         _url(path), data=body, method=method,

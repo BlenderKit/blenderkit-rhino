@@ -51,7 +51,7 @@ namespace Blendkit.Rhino.Infra
             while (!ct.IsCancellationRequested)
             {
                 if (iter++ % 30 == 0) // ~ every 9 seconds
-                    RhinoApp.WriteLine($"[BlenderKit][poll] iter={iter} port={ClientLib.ActivePort}");
+                    RhinoApp.WriteLine($"[Blendkit][poll] iter={iter} port={ClientLib.ActivePort}");
 
                 try
                 {
@@ -81,7 +81,7 @@ namespace Blendkit.Rhino.Infra
                     };
                     var body = await ClientLib.PostJsonAsync("/report", payload, ct);
                     if (iter % 30 == 1) // sample roughly every 9s
-                        RhinoApp.WriteLine($"[BlenderKit][poll] body.Length={body?.Length ?? 0}, head={(body?.Length > 0 ? body.Substring(0, Math.Min(120, body.Length)) : "")}");
+                        RhinoApp.WriteLine($"[Blendkit][poll] body.Length={body?.Length ?? 0}, head={(body?.Length > 0 ? body.Substring(0, Math.Min(120, body.Length)) : "")}");
                     Dispatch(body);
                     // Clean tick — reset the failure counter so a future
                     // outage starts counting from zero again.
@@ -90,7 +90,7 @@ namespace Blendkit.Rhino.Infra
                 catch (OperationCanceledException) { break; }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] report poll error: {ex.Message}");
+                    RhinoApp.WriteLine($"[Blendkit] report poll error: {ex.Message}");
                     // Connection refused / actively refused / socket
                     // closed — almost always means the Go client died.
                     // Drop the cached port so the next iteration re-runs
@@ -135,7 +135,7 @@ namespace Blendkit.Rhino.Infra
                 try { plugin.EnsureGoClient(); }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit] respawn attempt failed: {ex.Message}");
+                    RhinoApp.WriteLine($"[Blendkit] respawn attempt failed: {ex.Message}");
                 }
             });
         }
@@ -147,13 +147,13 @@ namespace Blendkit.Rhino.Infra
             try { doc = JsonDocument.Parse(body); }
             catch (Exception ex)
             {
-                RhinoApp.WriteLine($"[BlenderKit][dispatch] parse error: {ex.Message}");
+                RhinoApp.WriteLine($"[Blendkit][dispatch] parse error: {ex.Message}");
                 return;
             }
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
             {
-                RhinoApp.WriteLine($"[BlenderKit][dispatch] not an array, kind={doc.RootElement.ValueKind}");
+                RhinoApp.WriteLine($"[Blendkit][dispatch] not an array, kind={doc.RootElement.ValueKind}");
                 doc.Dispose();
                 return;
             }
@@ -169,7 +169,7 @@ namespace Blendkit.Rhino.Infra
                 try { _onTask?.Invoke(snapshot); }
                 catch (Exception ex)
                 {
-                    RhinoApp.WriteLine($"[BlenderKit][onTask] threw: {ex}");
+                    RhinoApp.WriteLine($"[Blendkit][onTask] threw: {ex}");
                 }
             }
             doc.Dispose();

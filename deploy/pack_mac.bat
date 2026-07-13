@@ -1,5 +1,5 @@
 @echo off
-REM BlenderKit for Rhino 8 - cross-pack the macOS .yak from Windows.
+REM Blendkit for Rhino 8 - cross-pack the macOS .yak from Windows.
 REM
 REM Why this exists:
 REM   deploy_rhino.bat packs the Windows yak (client.exe + net7.0-windows .rhp).
@@ -11,7 +11,7 @@ REM   This script reproduces the Mac yak from Windows by:
 REM     1. cross-compiling the Go client with GOOS=darwin GOARCH=arm64,
 REM     2. dotnet build -f net7.0 for the cross-platform .rhp,
 REM     3. staging files alongside manifest_mac.yml (renamed to manifest.yml),
-REM     4. yak build --platform mac to produce blenderkit-X.Y.Z-rh8_0-mac.yak,
+REM     4. yak build --platform mac to produce blendkit-X.Y.Z-rh8_0-mac.yak,
 REM     5. patching the zip's external_attr on client/client to 0o100755 so
 REM        the executable bit survives — yak.exe on Windows defaults to 0,
 REM        which would leave the Mach-O non-executable on extract.
@@ -21,7 +21,7 @@ REM   pack_mac.bat            - build everything, produce + post-process .yak
 REM   pack_mac.bat --help
 REM
 REM Output:
-REM   build\Release\packages\blenderkit-<version>-rh8_0-mac.yak
+REM   build\Release\packages\blendkit-<version>-rh8_0-mac.yak
 REM
 REM Requires Go on PATH (or at C:\Program Files\Go\bin\go.exe), the .NET 7
 REM SDK, and yak.exe (Rhino 8 install).
@@ -94,7 +94,7 @@ if not defined CLIENT_VERSION (
 
 echo.
 echo ==================================================
-echo  BlenderKit for Rhino 8 - cross-pack macOS .yak
+echo  Blendkit for Rhino 8 - cross-pack macOS .yak
 echo ==================================================
 echo  rhino dir   : %RHINO_DIR%
 echo  client src  : %CLIENT_DIR%
@@ -105,7 +105,7 @@ echo  staging     : %STAGING%
 echo.
 
 REM ---- 1) Cross-compile Go client (darwin/arm64) -----------------------
-REM Naming + flags mirror the BlenderKit add-on's dev.py (one-to-one),
+REM Naming + flags mirror the Blendkit add-on's dev.py (one-to-one),
 REM so a binary built by `blenderkit_client_build` from there drops in
 REM unchanged: GOOS/GOARCH set the target, CGO_ENABLED=0 forces a
 REM static build, -ldflags embeds the client version, and the output
@@ -175,8 +175,8 @@ if exist "%CLIENT_DIR%\tools" (
 )
 
 REM Optional toolbar — copy if present in the source tree.
-if exist "%RHINO_DIR%\deploy\BlenderKit.rui" (
-    copy /Y "%RHINO_DIR%\deploy\BlenderKit.rui" "%STAGING%\BlenderKit.rui" >nul
+if exist "%RHINO_DIR%\deploy\Blendkit.rui" (
+    copy /Y "%RHINO_DIR%\deploy\Blendkit.rui" "%STAGING%\Blendkit.rui" >nul
 )
 
 REM Drop any stale .yak from a previous pack so we don't accidentally
@@ -244,7 +244,7 @@ echo   2. dotnet build -f net7.0 ^(cross-platform .rhp^)
 echo   3. yak build --platform mac
 echo   4. patches the zip's exec bit on client/client
 echo.
-echo Output: build\Release\packages\blenderkit-^<version^>-rh8_0-mac.yak
+echo Output: build\Release\packages\blendkit-^<version^>-rh8_0-mac.yak
 echo.
 echo Requires Go and the .NET 7 SDK on this machine.
 exit /b 1

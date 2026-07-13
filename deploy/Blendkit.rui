@@ -4,7 +4,7 @@
   <tool_bars>
     <tool_bar guid="8d1656f4-6ced-460d-958f-0fa5eb1f433f">
       <text>
-        <locale_1033>BlenderKit</locale_1033>
+        <locale_1033>Blendkit</locale_1033>
       </text>
       <tool_bar_item guid="e4d5a1bf-b517-479e-94d9-30510177f31c">
         <left_macro_id>71647a92-2e0f-4af8-a2c8-5c096c3d7bb8</left_macro_id>
@@ -15,9 +15,9 @@
   <macros>
     <macro_item guid="71647a92-2e0f-4af8-a2c8-5c096c3d7bb8" bitmap_id="2328098b-8e42-4760-b19e-e26489459530">
       <text>
-        <locale_1033>BlenderKit</locale_1033>
+        <locale_1033>Blendkit</locale_1033>
       </text>
-      <script>_BlenderKit</script>
+      <script>_Blendkit</script>
     </macro_item>
   </macros>
   <icons>

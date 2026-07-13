@@ -11,13 +11,13 @@ using System.Threading.Tasks;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// OAuth2 (PKCE S256) login flow against blenderkit.com.
+    /// OAuth2 (PKCE S256) login flow against blendkit.com.
     ///
     /// Mirrors the Blender addon's bkit_oauth.py:
     ///   1. Generate code_verifier + code_challenge + state.
     ///   2. POST them to the Go client at /oauth2/verification_data.
     ///   3. Open the browser to /o/authorize with the challenge.
-    ///   4. blenderkit.com redirects to localhost:&lt;port&gt;/consumer/exchange/
+    ///   4. blendkit.com redirects to localhost:&lt;port&gt;/consumer/exchange/
     ///      which the Go client handles, exchanging the auth code for tokens.
     ///   5. The Go client emits a `login` task carrying access_token; the
     ///      panel watches /report for it and persists the key.
@@ -40,7 +40,7 @@ namespace Blendkit.Rhino.Infra
     {
         // Same OAuth client_id the Blender addon uses — shared registration.
         private const string ClientId = "IdFRwa3SGA8eMpzhRVFMg5Ts8sPK93xBjif93x0F";
-        private const string AuthorizeBase = "https://www.blenderkit.com/o/authorize";
+        private const string AuthorizeBase = "https://www.blendkit.com/o/authorize";
 
         // Refresh the token once it has fewer than 3 days of life left.
         // Mirrors REFRESH_RESERVE in the Blender addon's bkit_oauth.py.
@@ -107,6 +107,9 @@ namespace Blendkit.Rhino.Infra
         }
 
         // --- Persistence: same JSON file the Python preferences module uses ---
+        // Folder stays "BlenderKit" (not "Blendkit") after the brand rename:
+        // this file is shared with the Blender add-on and holds existing
+        // installs' saved login token. See Settings.Path for the rationale.
         public static string ConfigPath
         {
             get
@@ -191,7 +194,7 @@ namespace Blendkit.Rhino.Infra
 
         /// <summary>
         /// Fire the Go client's token-refresh endpoint. The Go client makes
-        /// the actual OAuth roundtrip to blenderkit.com and, on success,
+        /// the actual OAuth roundtrip to blendkit.com and, on success,
         /// emits a `token_refresh` task whose payload looks identical to
         /// a fresh login — the panel routes both through the same handler.
         ///

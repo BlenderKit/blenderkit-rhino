@@ -10,7 +10,7 @@ namespace Blendkit.Rhino.Infra
     /// <summary>
     /// Per-object proxy mesh cache + decimation utilities.
     ///
-    /// Why this exists: BlenderKit imports often land 100k+ face meshes that
+    /// Why this exists: Blendkit imports often land 100k+ face meshes that
     /// crawl Rhino's viewport. Rendered / Raytraced views (and the actual
     /// _Render pipeline) still need the full geometry, but Wireframe /
     /// Shaded views can live with a decimated stand-in. <see cref="ProxyDisplayConduit"/>
@@ -162,7 +162,7 @@ namespace Blendkit.Rhino.Infra
             if (obj is MeshObject mo) return mo.MeshGeometry;
             if (obj is InstanceObject io) return CombineDefinitionMeshes(io.InstanceDefinition);
             // BrepObject / Extrusion etc could be supported by pulling
-            // their render meshes — left for follow-up; the BlenderKit
+            // their render meshes — left for follow-up; the Blendkit
             // import path produces Mesh and Block (InstanceObject), so
             // these two cover the user-visible pain.
             return null;

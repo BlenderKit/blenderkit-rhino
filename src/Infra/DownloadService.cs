@@ -77,7 +77,7 @@ namespace Blendkit.Rhino.Infra
                     api_key = apiKey ?? "",
                     api_key_refresh = "",
                     api_key_timeout = 0,
-                    // BlenderKit API rejects downloads without a scene_uuid (it
+                    // Blendkit API rejects downloads without a scene_uuid (it
                     // uses it for per-project stats). Generate one per Rhino
                     // session — stable across downloads in the same process,
                     // resets on Rhino restart. Later we should persist this on

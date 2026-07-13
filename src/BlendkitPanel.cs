@@ -14,7 +14,7 @@ using Blendkit.Rhino.Ui;
 namespace Blendkit.Rhino
 {
     /// <summary>
-    /// Dockable panel — the real UI for BlenderKit in Rhino.
+    /// Dockable panel — the real UI for Blendkit in Rhino.
     ///
     /// v0.1: search box + asset-type picker + results list + download + import.
     /// Double-click a result to download it; if the server returns a
@@ -26,7 +26,7 @@ namespace Blendkit.Rhino
     {
         public static Guid PanelId => typeof(BlendkitPanel).GUID;
         // Tracks the most recently-constructed panel instance. Used by the
-        // BlenderKitTest* commands to drive a search even when the panel
+        // BlendkitTest* commands to drive a search even when the panel
         // was already open (Panels.OpenPanel is a no-op then, so the
         // constructor's auto-search path doesn't re-fire).
         public static BlendkitPanel ActiveInstance { get; private set; }
@@ -54,7 +54,7 @@ namespace Blendkit.Rhino
         private readonly DropDown _resolution = new DropDown();
         private readonly DropDown _order = new DropDown();
         private readonly DropDown _license = new DropDown();
-        // Quality slider — BlenderKit's quality_count is 0-10. 0 means
+        // Quality slider — Blendkit's quality_count is 0-10. 0 means
         // "any quality" (filter omitted); any positive value translates to
         // `quality_count_gte:N`.
         private readonly Slider _quality = new Slider
@@ -91,7 +91,7 @@ namespace Blendkit.Rhino
         // .prxc / .prx sidecar next to the freshly-imported file and
         // adopts it as the viewport proxy (replacing the default
         // Mesh.Reduce-decimated proxy). Off by default until the
-        // BlenderKit CDN starts shipping proxor sidecars routinely —
+        // Blendkit CDN starts shipping proxor sidecars routinely —
         // when no sidecar exists the import path falls back to
         // decimation, so this flag is safe to enable preemptively.
         private readonly CheckBox _useProxor = new CheckBox { Checked = false };
@@ -152,14 +152,14 @@ namespace Blendkit.Rhino
             Padding = new Padding(0, 2),
         };
         // Validator-only debug widget: shows the last URL sent to the
-        // BlenderKit search API. Hidden by default; flipped on once the
+        // Blendkit search API. Hidden by default; flipped on once the
         // profile arrives with canEditAllAssets=true (mirrors the Blender
         // addon's profile_is_validator helper).
         private readonly TextBox _searchUrlBox = new TextBox
         {
             ReadOnly = true,
             PlaceholderText = "(no search yet)",
-            ToolTip = "Last URL sent to BlenderKit's search API (validator-only)",
+            ToolTip = "Last URL sent to Blendkit's search API (validator-only)",
             Visible = false,
         };
         private readonly ThumbnailGrid _grid = new ThumbnailGrid();
@@ -306,7 +306,7 @@ namespace Blendkit.Rhino
                     {
                         try
                         {
-                            // Apply the BlenderKitTest* command's seeded state so
+                            // Apply the BlendkitTest* command's seeded state so
                             // the auto-search uses the right asset type and query.
                             // Suppress the cascade of TextChanged /
                             // SelectedIndexChanged → DoSearch fan-outs; we run
@@ -400,14 +400,14 @@ namespace Blendkit.Rhino
             // adding visible quality at typical viewport zooms.
             _resolution.SelectedIndex = 1; // 1K
 
-            // Order: BlenderKit accepts these as `+order:<value>` in the URL.
+            // Order: Blendkit accepts these as `+order:<value>` in the URL.
             foreach (var (label, _) in OrderOptions) _order.Items.Add(label);
             _order.SelectedIndex = 0;
 
             foreach (var (label, _) in LicenseOptions) _license.Items.Add(label);
             _license.SelectedIndex = 0;
 
-            // Quality slider 0..10 mirrors BlenderKit's quality_count range.
+            // Quality slider 0..10 mirrors Blendkit's quality_count range.
             _quality.ValueChanged += (s, e) =>
             {
                 _qualityLabel.Text = _quality.Value == 0
@@ -897,7 +897,7 @@ namespace Blendkit.Rhino
             _procedural.SelectedIndexChanged += refire;
 
             _notifBtn.Click += (s, e) =>
-                Process.Start(new ProcessStartInfo("https://www.blenderkit.com/profile/notifications/")
+                Process.Start(new ProcessStartInfo("https://www.blendkit.com/profile/notifications/")
                     { UseShellExecute = true });
 
             var loginRow = new DynamicLayout();
@@ -1015,7 +1015,7 @@ namespace Blendkit.Rhino
             }
             try
             {
-                SetStatus("Opening BlenderKit login in browser…");
+                SetStatus("Opening Blendkit login in browser…");
                 await AuthService.BeginAsync(Process.GetCurrentProcess().Id, SearchService.AddonVersion);
             }
             catch (Exception ex) { SetStatus("Login error: " + ex.Message); }
@@ -1076,7 +1076,7 @@ namespace Blendkit.Rhino
             ("5 ★",  "5"),
         };
 
-        // Style values come straight from BlenderKit's modelStyle enum.
+        // Style values come straight from Blendkit's modelStyle enum.
         private static readonly (string Label, string Value)[] StyleOptions = new[]
         {
             ("Any style", ""),
@@ -1508,7 +1508,7 @@ namespace Blendkit.Rhino
             menu.Items.Add(bookmark);
             menu.Items.AddSeparator();
 
-            var web = new ButtonMenuItem { Text = "Open on blenderkit.com" };
+            var web = new ButtonMenuItem { Text = "Open on blendkit.com" };
             web.Click += (s, e) => OpenAssetOnWeb(hit);
             menu.Items.Add(web);
 
@@ -1578,7 +1578,7 @@ namespace Blendkit.Rhino
 
             Row("License", license);
             // Manufacturer + Designer — Rhino users explicitly asked for
-            // these (Tags are too noisy for CAD work, and most BlenderKit
+            // these (Tags are too noisy for CAD work, and most Blendkit
             // furniture/lighting/equipment carries proper provenance).
             Row("Manufacturer", GetParam("manufacturer"));
             Row("Designer", GetParam("designer"));
@@ -1708,7 +1708,7 @@ namespace Blendkit.Rhino
             };
             // Thumbnail card — purely visual separation, no title.
             leftCol.AddRow(Card(thumbView));
-            // Rating widgets only useful when logged in. BlenderKit takes
+            // Rating widgets only useful when logged in. Blendkit takes
             // quality on a 1-10 scale and working_hours as a per-asset-
             // type preset list; the user enters these once and it
             // persists server-side. Layout matches the Blender addon:
@@ -1965,12 +1965,12 @@ namespace Blendkit.Rhino
             };
             actionsCol.AddRow(searchSimilarBtn);
 
-            var webBtn = new Button { Text = "Open on blenderkit.com" };
+            var webBtn = new Button { Text = "Open on blendkit.com" };
             webBtn.Click += (s, e) => OpenAssetOnWeb(hit);
             actionsCol.AddRow(webBtn);
             // Spacer at the bottom of the column. Without this, Eto's
             // DynamicLayout absorbs the column's vertical slack into the
-            // last AddRow — making "Open on blenderkit.com" stretch to
+            // last AddRow — making "Open on blendkit.com" stretch to
             // ~3× the height of the other action buttons. The null +
             // yscale=true row eats the slack instead.
             actionsCol.Add(null, false, true);
@@ -1978,7 +1978,7 @@ namespace Blendkit.Rhino
             // Comments button used to live here and just deep-linked to
             // #comments on the asset gallery page. It was a confusing UX
             // (the popup itself can't host comments — that thread is online-
-            // only), so it now leaves through "Open on blenderkit.com" only.
+            // only), so it now leaves through "Open on blendkit.com" only.
 
             // Close button removed — Rhino dialog windows already get
             // a native ✕ in the title bar plus Esc / Alt+F4 handling,
@@ -2036,10 +2036,10 @@ namespace Blendkit.Rhino
                             && avEl.ValueKind == JsonValueKind.String)
                         {
                             var avStr = avEl.GetString() ?? "";
-                            // BlenderKit avatar urls are sometimes
+                            // Blendkit avatar urls are sometimes
                             // relative ("/avatar-redirect/...") — make
                             // them absolute against the API host.
-                            if (avStr.StartsWith("/")) avStr = "https://www.blenderkit.com" + avStr;
+                            if (avStr.StartsWith("/")) avStr = "https://www.blendkit.com" + avStr;
                             if (!string.IsNullOrEmpty(avStr)) { aurl = avStr; break; }
                         }
                     }
@@ -2067,7 +2067,7 @@ namespace Blendkit.Rhino
                             try
                             {
                                 using var http = new System.Net.Http.HttpClient();
-                                http.DefaultRequestHeaders.UserAgent.ParseAdd("BlenderKitRhino/0.1");
+                                http.DefaultRequestHeaders.UserAgent.ParseAdd("BlendkitRhino/0.1");
                                 var bytes = await http.GetByteArrayAsync(fetchUrl);
                                 if (bytes != null && bytes.Length > 64)
                                 {
@@ -2182,8 +2182,8 @@ namespace Blendkit.Rhino
                 && abEl.ValueKind == JsonValueKind.String)
                 assetId = abEl.GetString() ?? "";
             var url = string.IsNullOrEmpty(assetId)
-                ? "https://www.blenderkit.com/asset-gallery/"
-                : $"https://www.blenderkit.com/asset-gallery-detail/{assetId}/";
+                ? "https://www.blendkit.com/asset-gallery/"
+                : $"https://www.blendkit.com/asset-gallery-detail/{assetId}/";
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
 
@@ -2192,8 +2192,8 @@ namespace Blendkit.Rhino
             var authorId = hit.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object
                 && a.TryGetProperty("id", out var aid) ? aid.ToString() : "";
             var url = string.IsNullOrEmpty(authorId)
-                ? "https://www.blenderkit.com/asset-gallery/"
-                : $"https://www.blenderkit.com/profile/{authorId}/";
+                ? "https://www.blendkit.com/asset-gallery/"
+                : $"https://www.blendkit.com/profile/{authorId}/";
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
 
@@ -2926,7 +2926,7 @@ namespace Blendkit.Rhino
         // Cached plan flag set by HandleProfileTask. False until the
         // /profiles/get_user_profile task confirms a non-Free plan.
         private bool _hasFullPlan;
-        // The logged-in user's BlenderKit user id. Used by the
+        // The logged-in user's Blendkit user id. Used by the
         // "My uploads" filter to pin author_id to themselves.
         private int _profileUserId;
         // One-shot override for DoSearch. The asset-type SelectedIndex
@@ -3185,7 +3185,7 @@ namespace Blendkit.Rhino
                     || msg.Contains("connection refused")
                     || msg.Contains("No connection could be made"))
                 {
-                    SetStatus("BlenderKit helper isn't responding — check that client.exe is running. Retrying in background.");
+                    SetStatus("Blendkit helper isn't responding — check that client.exe is running. Retrying in background.");
                 }
                 else
                 {
@@ -3221,7 +3221,7 @@ namespace Blendkit.Rhino
                 return;
             }
             // Match any of the asset's id-like fields against the cache folder
-            // name. BlenderKit uses both `id` (numeric string in some places,
+            // name. Blendkit uses both `id` (numeric string in some places,
             // UUID in others) and `assetBaseId` (the canonical UUID) — and
             // the Go client names download folders after one or the other
             // depending on the path it took.
@@ -3354,7 +3354,7 @@ namespace Blendkit.Rhino
 
         /// <summary>
         /// Read the asset's bounding-box from the search hit's dictParameters
-        /// (BlenderKit stores these in meters), and convert to the active
+        /// (Blendkit stores these in meters), and convert to the active
         /// Rhino doc's model units. Returns a sane default when the hit
         /// doesn't carry the fields.
         /// </summary>
@@ -3375,7 +3375,7 @@ namespace Blendkit.Rhino
             double mnZ = Get("boundBoxMinZ"), mxZ = Get("boundBoxMaxZ");
             if (double.IsNaN(mnX) || double.IsNaN(mxX)) return fallback;
 
-            // BlenderKit dimensions are in meters. Convert to the doc's unit.
+            // Blendkit dimensions are in meters. Convert to the doc's unit.
             var doc = global::Rhino.RhinoDoc.ActiveDoc;
             var scale = doc != null
                 ? global::Rhino.RhinoMath.UnitScale(global::Rhino.UnitSystem.Meters, doc.ModelUnitSystem)
@@ -3949,7 +3949,7 @@ namespace Blendkit.Rhino
                 try
                 {
                     var doc = global::Rhino.RhinoDoc.ActiveDoc;
-                    WithUndo(doc, "BlenderKit: Place cached block", () =>
+                    WithUndo(doc, "Blendkit: Place cached block", () =>
                     {
                     if (normal.IsZero) normal = global::Rhino.Geometry.Vector3d.ZAxis;
                     var rot = global::Rhino.Geometry.Transform.Rotation(
@@ -3974,7 +3974,7 @@ namespace Blendkit.Rhino
                     var iid = doc.Objects.AddInstanceObject(instDefIdx, xform);
                     if (iid != Guid.Empty)
                     {
-                        StampBlenderKitMetadata(doc, new[] { iid }, sourcePath: "(cached InstDef)");
+                        StampBlendkitMetadata(doc, new[] { iid }, sourcePath: "(cached InstDef)");
                         doc.Views.Redraw();
                         SetStatus($"Placed cached block at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {drop.AssetName}");
                     }
@@ -4018,7 +4018,7 @@ namespace Blendkit.Rhino
                     try
                     {
                         var doc = global::Rhino.RhinoDoc.ActiveDoc;
-                        WithUndo(doc, "BlenderKit: Drop asset at point", () =>
+                        WithUndo(doc, "Blendkit: Drop asset at point", () =>
                             ImportAtPointCore(doc, path, pt, normal, spinRadians));
                     }
                     catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
@@ -4125,7 +4125,7 @@ namespace Blendkit.Rhino
                 }
             }
             var t3 = System.Diagnostics.Stopwatch.StartNew();
-            StampBlenderKitMetadata(doc, liveIds, path, xform);
+            StampBlendkitMetadata(doc, liveIds, path, xform);
             t3.Stop();
             BkLog.W($"import-timing: StampMetadata + auto-proxy ({liveIds.Count} objects): {t3.ElapsedMilliseconds} ms");
             doc.Views.Redraw();
@@ -4319,7 +4319,7 @@ namespace Blendkit.Rhino
 
         /// <summary>
         /// Run <paramref name="action"/> inside a single Rhino undo
-        /// record so the entire BlenderKit operation (import + block
+        /// record so the entire Blendkit operation (import + block
         /// creation + material assignment) collapses to one Ctrl+Z
         /// step instead of leaving the user with dozens of orphan
         /// AddObject events to undo individually. Mirrors the
@@ -4527,12 +4527,12 @@ namespace Blendkit.Rhino
         }
 
         /// <summary>
-        /// Tag the imported objects with BlenderKit metadata via the Rhino
+        /// Tag the imported objects with Blendkit metadata via the Rhino
         /// per-object UserDictionary. Lets us later recognise that an object
         /// originated from a particular asset (and which one), without
         /// having to inspect filenames or layers.
         /// </summary>
-        private static void StampBlenderKitMetadata(global::Rhino.RhinoDoc doc,
+        private static void StampBlendkitMetadata(global::Rhino.RhinoDoc doc,
             System.Collections.Generic.IList<Guid> ids, string sourcePath,
             global::Rhino.Geometry.Transform? placementXform = null)
         {
@@ -4651,7 +4651,7 @@ namespace Blendkit.Rhino
                 try
                 {
                     var doc = global::Rhino.RhinoDoc.ActiveDoc;
-                    WithUndo(doc, "BlenderKit: Import asset (pick point)", () =>
+                    WithUndo(doc, "Blendkit: Import asset (pick point)", () =>
                     {
 
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
@@ -4703,7 +4703,7 @@ namespace Blendkit.Rhino
                             if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                         }
                     }
-                    StampBlenderKitMetadata(doc, liveIds, path, xform);
+                    StampBlendkitMetadata(doc, liveIds, path, xform);
                     doc.Views.Redraw();
                     SetStatus(res == global::Rhino.Input.GetResult.Point
                         ? $"Placed at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}"
@@ -4787,7 +4787,7 @@ namespace Blendkit.Rhino
             var body = new Label
             {
                 Text = string.IsNullOrEmpty(_apiKey)
-                    ? "Log in to BlenderKit and (if needed) subscribe to Full plan to download paid assets."
+                    ? "Log in to Blendkit and (if needed) subscribe to Full plan to download paid assets."
                     : "Your account is on the Free plan. Subscribe to Full plan to download paid assets.",
                 Wrap = WrapMode.Word,
                 TextColor = BkColors.DarkText,
@@ -4805,7 +4805,7 @@ namespace Blendkit.Rhino
             planBtn.Click += (s, e) =>
             {
                 dlg.Close();
-                Process.Start(new ProcessStartInfo("https://www.blenderkit.com/plans/pricing/")
+                Process.Start(new ProcessStartInfo("https://www.blendkit.com/plans/pricing/")
                     { UseShellExecute = true });
             };
             btnRow.Add(planBtn);
@@ -5025,7 +5025,7 @@ namespace Blendkit.Rhino
                 BkLog.W("  result keys: " + string.Join(",", rkeys));
             }
             else BkLog.W("  result kind=" + result.ValueKind);
-            // Some BlenderKit responses wrap the profile in a `user` field;
+            // Some Blendkit responses wrap the profile in a `user` field;
             // others put fields at the top level. Probe both.
             var user = result.TryGetProperty("user", out var u) ? u : result;
             if (user.ValueKind != JsonValueKind.Object) return;
@@ -5053,7 +5053,7 @@ namespace Blendkit.Rhino
             }
             BkLog.W("PROFILE keys: " + string.Join(", ", keys));
 
-            // BlenderKit's /api/v1/me/ returns canEditAllAssets at the
+            // Blendkit's /api/v1/me/ returns canEditAllAssets at the
             // *top level* of the response, NOT inside the `user` sub-object
             // (mirrors blenderkit/search.py:handle_get_user_profile in the
             // Blender add-on, which reads `task.result.get("canEditAllAssets")`).
@@ -5082,7 +5082,7 @@ namespace Blendkit.Rhino
                 }
             }
 
-            // BlenderKit's plan slugs in the API: "free", "full". Anything
+            // Blendkit's plan slugs in the API: "free", "full". Anything
             // that isn't free unlocks the paid catalogue, so treat any
             // non-free string as Full. Validators implicitly have Full.
             bool hasFull = isValidator
@@ -5091,7 +5091,7 @@ namespace Blendkit.Rhino
 
             // User id from the profile — pinned to the "My uploads"
             // filter when the user enables it. Stored as int because
-            // BlenderKit's api/v1/search endpoint accepts a numeric id.
+            // Blendkit's api/v1/search endpoint accepts a numeric id.
             int userId = 0;
             if (user.TryGetProperty("id", out var idEl))
             {
@@ -5404,7 +5404,7 @@ namespace Blendkit.Rhino
                         return;
                     }
                     var doc = global::Rhino.RhinoDoc.ActiveDoc;
-                    WithUndo(doc, "BlenderKit: Import asset", () =>
+                    WithUndo(doc, "Blendkit: Import asset", () =>
                     {
 
                     string assetBaseIdFast = _grid_static_currentAssetBaseId;
@@ -5469,7 +5469,7 @@ namespace Blendkit.Rhino
                             if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                         }
                     }
-                    StampBlenderKitMetadata(doc, liveIds, path, global::Rhino.Geometry.Transform.Identity);
+                    StampBlendkitMetadata(doc, liveIds, path, global::Rhino.Geometry.Transform.Identity);
                     doc.Views.Redraw();
                     SetStatus($"Imported {System.IO.Path.GetFileName(path)}.");
                     });
@@ -5699,7 +5699,7 @@ namespace Blendkit.Rhino
         /// Three cases:
         ///   1. Plain RhinoObject (Mesh / Brep / Extrusion): set
         ///      MaterialFromObject + MaterialIndex on its attributes.
-        ///   2. InstanceObject (block — what our blockified BlenderKit
+        ///   2. InstanceObject (block — what our blockified Blendkit
         ///      imports become): the InstanceObject's per-attribute
         ///      MaterialIndex is *not* what controls rendering of the
         ///      block's members. The members each carry their own
@@ -5707,7 +5707,7 @@ namespace Blendkit.Rhino
         ///      flipped to MaterialFromParent the parent material is
         ///      ignored. We update each member to MaterialFromObject +
         ///      our matIdx (changes how every instance of this block
-        ///      renders, which for BlenderKit's "one asset = one
+        ///      renders, which for Blendkit's "one asset = one
         ///      InstDef" pattern is the expected outcome).
         /// </summary>
         private static void AssignMaterialToObject(int matIdx, Guid hitId)
@@ -5715,7 +5715,7 @@ namespace Blendkit.Rhino
             var doc = global::Rhino.RhinoDoc.ActiveDoc;
             if (doc == null) return;
             uint serial = 0;
-            try { serial = doc.BeginUndoRecord("BlenderKit: Assign material"); } catch { }
+            try { serial = doc.BeginUndoRecord("Blendkit: Assign material"); } catch { }
             try
             {
                 var obj = doc.Objects.Find(hitId);

@@ -69,7 +69,7 @@ namespace Blendkit.Rhino.Infra
         /// <see cref="PostJsonAsync"/>: drops the cached port + re-throws
         /// on local-connect failure so the report loop can re-discover.
         ///
-        /// We need the verb-agnostic form because the BlenderKit Go
+        /// We need the verb-agnostic form because the Blendkit Go
         /// client's <c>/refresh_token</c> and <c>/oauth2/logout</c>
         /// endpoints both take JSON on a GET (matches the addon's
         /// <c>session.get(url, json=data)</c> calls in client_lib.py;

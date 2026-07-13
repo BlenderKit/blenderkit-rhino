@@ -14,7 +14,7 @@ namespace Blendkit.Rhino.Infra
     {
         public const string AddonVersion = "0.1.0";
 
-        private static readonly string[] ApiPrefix = new[] { "https://www.blenderkit.com/api/v1" };
+        private static readonly string[] ApiPrefix = new[] { "https://www.blendkit.com/api/v1" };
 
         /// <summary>
         /// Bag of filter values the panel passes to the URL builder. Empty
@@ -85,12 +85,12 @@ namespace Blendkit.Rhino.Infra
             if (f.FreeOnly) qs += "+is_free:true";
             if (f.BookmarksOnly) qs += "+bookmarks_rating:1";
             if (!string.IsNullOrEmpty(f.License)) qs += "+license:" + f.License;
-            // BlenderKit's filter syntax uses suffix _gte/_lte rather than
+            // Blendkit's filter syntax uses suffix _gte/_lte rather than
             // operators (`+key_gte:value`, not `+key:>=value`).
             if (f.QualityMin > 0) qs += $"+quality_count_gte:{f.QualityMin}";
             // Category slug. Two rules from blenderkit/search.py:1341-1351
             // we previously missed:
-            //   1. URL-encode the slug. Most BlenderKit slugs are
+            //   1. URL-encode the slug. Most Blendkit slugs are
             //      ASCII (kebab-case), but some carry non-ASCII chars
             //      that the server's URL parser refused, returning 0
             //      results without hint.
@@ -166,7 +166,7 @@ namespace Blendkit.Rhino.Infra
             }
 
             // Mirror blenderkit/search.py:decide_ordering. Behavior the user
-            // expects from BlenderKit:
+            // expects from Blendkit:
             //   no query + no category   → -last_blend_upload (recency)
             //   has category, no query   → -score,_score (BK score, then relevance)
             //   anything else            → _score (pure ES relevance / "best match")

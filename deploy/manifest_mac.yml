@@ -4,25 +4,31 @@
 #     users don't accidentally install a darwin-binary client;
 #   * the version stays in lockstep with the Windows package.
 #
-# Yak builds one .yak per OS Ă˘â‚¬â€ť `yak build` in a dir containing this
-# file produces blenderkit-<version>-rh8_30-mac.yak.
-name: BlenderKit
+# Yak builds one .yak per OS - `yak build` in a dir containing this
+# file produces blendkit-<version>-rh8_30-mac.yak.
+#
+# See manifest.yml for the BlenderKit -> Blendkit rename note (new Yak
+# listing; old one stays as separate history; `blenderkit` keyword
+# retained for discoverability under the old name).
+name: Blendkit
 version: 0.1.3
 authors:
-  - BlenderKit
+  - Blendkit
 description: |
-  Ă˘ĹˇÂ ÄŹÂ¸Ĺą EXPERIMENTAL ALPHA Ă˘â‚¬â€ť expect bugs, incomplete features, and
-  breaking changes between releases. Please report any issues at
+  Blendkit (formerly BlenderKit).
+
+  EXPERIMENTAL ALPHA - expect bugs, incomplete features, and breaking
+  changes between releases. Please report any issues at
   https://github.com/BlenderKit/blenderkit-rhino/issues so we can
   track and fix them.
 
-  BlenderKit asset browser for Rhino 8 (macOS) Ă˘â‚¬â€ť drag-drop access to
+  Blendkit asset browser for Rhino 8 (macOS) - drag-drop access to
   thousands of free and paid 3D models, materials, and HDR
-  environments. Mirrors the Blender BlenderKit add-on: per-asset-type
-  filters, login, bookmarks, ratings, and an in-Rhino preview before
-  download.
+  environments. Mirrors the Blender add-on: per-asset-type filters,
+  login, bookmarks, ratings, and an in-Rhino preview before download.
 url: https://github.com/BlenderKit/blenderkit-rhino
 keywords:
+  - blendkit
   - blenderkit
   - assets
   - materials
@@ -32,6 +38,6 @@ keywords:
   - textures
   - asset-browser
 icon: icon.png
-# macOS-only Ă˘â‚¬â€ť the Go client binary shipped in this package is a Mach-O
+# macOS-only - the Go client binary shipped in this package is a Mach-O
 # executable. The Windows variant (manifest.yml) ships the .exe.
 os: mac

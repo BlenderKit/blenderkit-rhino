@@ -24,7 +24,7 @@ namespace Blendkit.Rhino.Infra
     public static class PrxToMesh
     {
         // Memoise (file path + mtime) → Mesh. A single import drops N
-        // objects into the doc and StampBlenderKitMetadata's auto-
+        // objects into the doc and StampBlendkitMetadata's auto-
         // attach hook fires per object; the OLD code re-read + re-
         // parsed the same .prxc N times. For a 200-mesh asset that's
         // 200 gzip-decompress + 200 Mesh constructions — measurable

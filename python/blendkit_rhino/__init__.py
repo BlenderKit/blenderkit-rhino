@@ -1,4 +1,4 @@
-"""BlenderKit for Rhino 8 — Python business logic.
+"""Blendkit for Rhino 8 — Python business logic.
 
 Module layout:
     client_lib       HTTP wrapper for the local Go client.

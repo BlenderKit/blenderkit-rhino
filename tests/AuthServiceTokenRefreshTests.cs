@@ -146,7 +146,7 @@ namespace Blendkit.Rhino.Tests
         {
             // Standard OAuth response shape: "expires_in" is a number of
             // seconds. Our pin documents both number and string accepted,
-            // since BlenderKit's Go client has been seen to emit strings.
+            // since Blendkit's Go client has been seen to emit strings.
             var doc = System.Text.Json.JsonDocument.Parse("{\"expires_in\":36000}");
             Assert.Equal(36000, AuthService.ExtractExpiresIn(doc.RootElement));
         }

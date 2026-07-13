@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BlenderKit for Rhino 8 — macOS dev deploy.
+# Blendkit for Rhino 8 — macOS dev deploy.
 #
 # Mirrors deploy_rhino.bat: kill Rhino → build → copy artefacts into Rhino's
 # plug-ins directory → optionally pack a .yak / relaunch.
@@ -12,7 +12,7 @@
 #   ./deploy_rhino.sh --nolaunch     # don't open Rhino after deploy
 #   ./deploy_rhino.sh --nopack       # skip the .yak pack (fast local iteration)
 #   ./deploy_rhino.sh --noyak        # don't mirror into the Yak-installed
-#                                    # package dir (packages/8.0/BlenderKit/...)
+#                                    # package dir (packages/8.0/Blendkit/...)
 
 set -euo pipefail
 
@@ -72,7 +72,7 @@ else
 fi
 # Normalise so log output and error messages don't show ../.. paths.
 CLIENT_DIR="$(cd "$CLIENT_DIR" 2>/dev/null && pwd || echo "$CLIENT_DIR")"
-TARGET="$HOME/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/BlenderKit"
+TARGET="$HOME/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Blendkit"
 # Rhino 8 on macOS ships as "Rhino 8.app" (the older "Rhinoceros 8.app"
 # bundle name from earlier installers is also accepted as a fallback).
 # The Mach-O binary inside is still called `Rhinoceros`, so `pkill -x
@@ -92,27 +92,38 @@ YAK_BIN="$RHINO_APP/Contents/Resources/bin/yak"
 # loads it from there and the dev Plug-ins/ copy is ignored, so a deploy
 # that only writes to Plug-ins/ silently does nothing — the symptom the
 # user sees is "client.exe still in there, my arm64 client never appears".
-# We mirror into the highest-version Yak install of "BlenderKit" we find.
-YAK_PKG_PARENT="$HOME/Library/Application Support/McNeel/Rhinoceros/packages/8.0/BlenderKit"
-YAK_PKG_DIR=""
-if [ -d "$YAK_PKG_PARENT" ]; then
+# We mirror into the highest-version Yak install we find. During the
+# BlenderKit -> Blendkit rename there may be an OLD package installed
+# under the previous name (packages/8.0/BlenderKit/) that Rhino is still
+# loading — until the user installs the renamed "Blendkit" .yak and
+# removes the old one. Both share the same plug-in GUID, so whichever is
+# installed is what Rhino runs. We therefore probe BOTH names and mirror
+# into every one that exists, so a deploy never silently updates a copy
+# Rhino isn't loading. (Once the old package is uninstalled its dir is
+# gone and this collapses to just the Blendkit path.)
+YAK_PKG_ROOT="$HOME/Library/Application Support/McNeel/Rhinoceros/packages/8.0"
+YAK_PKG_DIRS=()
+for pkgname in Blendkit BlenderKit; do
+    parent="$YAK_PKG_ROOT/$pkgname"
+    [ -d "$parent" ] || continue
     # Highest version dir wins (sort -V handles 0.1.0 < 0.10.0). Filter
     # to *directories* only — Yak drops a manifest.txt next to the
     # version dirs and we'd otherwise pick that up as the "version".
-    YAK_PKG_DIR="$(find "$YAK_PKG_PARENT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+    verdir="$(find "$parent" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
         | sort -V | tail -n1)"
-fi
+    [ -n "$verdir" ] && YAK_PKG_DIRS+=("$verdir")
+done
 
 echo
 echo "=================================================="
-echo " BlenderKit for Rhino 8 — deploy (macOS)"
+echo " Blendkit for Rhino 8 — deploy (macOS)"
 echo "=================================================="
 echo " rhino dir  : $RHINO_DIR"
 echo " repo root  : $REPO_ROOT"
 echo " client dir : $CLIENT_DIR"
 echo " plugins/   : $TARGET"
-if [ -n "$YAK_PKG_DIR" ] && [ "$DO_YAK_MIRROR" = "1" ]; then
-    echo " yak pkg    : $YAK_PKG_DIR"
+if [ "${#YAK_PKG_DIRS[@]}" -gt 0 ] && [ "$DO_YAK_MIRROR" = "1" ]; then
+    for d in "${YAK_PKG_DIRS[@]}"; do echo " yak pkg    : $d"; done
 fi
 echo " rhino app  : $RHINO_APP"
 
@@ -235,11 +246,11 @@ deploy_to() {
     echo "[deploy] --> $dest"
     mkdir -p "$dest" "$dest/python" "$dest/client"
 
-    # Purge stale .rhp files from previous builds. Pre-rename builds
-    # (BlenderKitRhino.rhp) and the current build (BlendkitRhino.rhp)
-    # share the same plug-in GUID, so if both end up in the folder
-    # Rhino loads whichever it indexed first — leading to the new
-    # code silently not running. Delete every .rhp that isn't ours.
+    # Purge stale .rhp files from previous builds. Historically the .rhp
+    # was named BlenderKitRhino.rhp; it's BlendkitRhino.rhp now. Both
+    # share the same plug-in GUID, so if both end up in the folder Rhino
+    # loads whichever it indexed first — leading to the new code silently
+    # not running. Delete every .rhp that isn't ours.
     shopt -s nullglob
     for rhp in "$dest"/*.rhp; do
         base="$(basename "$rhp")"
@@ -304,10 +315,17 @@ deploy_to() {
     fi
 
     # Optional deploy-side artefacts (toolbar, manifest, listing icon).
-    if [ -f "$RHINO_DIR/deploy/BlenderKit.rui" ]; then
-        cp -f "$RHINO_DIR/deploy/BlenderKit.rui" "$dest/BlenderKit.rui"
+    if [ -f "$RHINO_DIR/deploy/Blendkit.rui" ]; then
+        cp -f "$RHINO_DIR/deploy/Blendkit.rui" "$dest/Blendkit.rui"
     fi
-    if [ -f "$RHINO_DIR/deploy/manifest.yml" ]; then
+    # Yak manifest. This script only ever runs on macOS, so prefer the
+    # macOS manifest (manifest_mac.yml, which carries `os: mac`) — that
+    # both tags the built .yak as macOS-only and stops Windows users
+    # from installing a package whose client/ is a Mach-O binary. Fall
+    # back to the generic manifest.yml if the mac one is absent.
+    if [ -f "$RHINO_DIR/deploy/manifest_mac.yml" ]; then
+        cp -f "$RHINO_DIR/deploy/manifest_mac.yml" "$dest/manifest.yml"
+    elif [ -f "$RHINO_DIR/deploy/manifest.yml" ]; then
         cp -f "$RHINO_DIR/deploy/manifest.yml" "$dest/manifest.yml"
     fi
     if [ -f "$RHINO_DIR/src/Resources/blenderkit_logo.png" ]; then
@@ -316,8 +334,13 @@ deploy_to() {
 }
 
 deploy_to "$TARGET"
-if [ "$DO_YAK_MIRROR" = "1" ] && [ -n "$YAK_PKG_DIR" ] && [ -d "$YAK_PKG_DIR" ]; then
-    deploy_to "$YAK_PKG_DIR"
+# Guard the array expansion with a length check: macOS's stock bash 3.2
+# treats "${arr[@]}" on an empty array as an unbound-variable error under
+# `set -u`, so we must not expand YAK_PKG_DIRS when it's empty.
+if [ "$DO_YAK_MIRROR" = "1" ] && [ "${#YAK_PKG_DIRS[@]}" -gt 0 ]; then
+    for d in "${YAK_PKG_DIRS[@]}"; do
+        [ -d "$d" ] && deploy_to "$d"
+    done
 fi
 
 # --pack: produce a redistributable .yak. Yak's macOS binary lives
@@ -328,9 +351,15 @@ if [ "$DO_PACK" = "1" ]; then
     if [ ! -x "$YAK_BIN" ]; then
         echo "[deploy] WARNING: Yak not found at $YAK_BIN — skipping pack."
     else
-        echo "[deploy] Building .yak package..."
+        echo "[deploy] Building .yak package (--platform mac)..."
         mkdir -p "$RHINO_DIR/build/Release/packages"
-        ( cd "$TARGET" && "$YAK_BIN" build ) || {
+        # `yak build` decides the distribution tag (rh8_0-mac vs -any) and
+        # the install-time platform restriction from the --platform flag,
+        # NOT from the manifest's `os:` key (which yak ignores). Without
+        # --platform mac we'd emit a `-any` package that Windows users
+        # could install — and it ships a Mach-O `client`, which is broken
+        # on Windows. So force mac here; this is the macOS packer.
+        ( cd "$TARGET" && "$YAK_BIN" build --platform mac ) || {
             echo "[deploy] ERROR: yak build failed; check manifest.yml syntax + version."
         }
         for yak in "$TARGET"/*.yak; do

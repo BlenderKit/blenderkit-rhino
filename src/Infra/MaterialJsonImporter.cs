@@ -83,7 +83,7 @@ namespace Blendkit.Rhino.Infra
             int result = -1;
             var doc0 = RhinoDoc.ActiveDoc;
             uint serial = 0;
-            try { if (doc0 != null) serial = doc0.BeginUndoRecord("BlenderKit: Add material"); } catch { }
+            try { if (doc0 != null) serial = doc0.BeginUndoRecord("Blendkit: Add material"); } catch { }
             try
             {
                 if (!File.Exists(jsonPath)) return -1;
@@ -91,8 +91,8 @@ namespace Blendkit.Rhino.Infra
                 var root = doc.RootElement;
 
                 var name = root.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
-                    ? (n.GetString() ?? "BlenderKit material")
-                    : "BlenderKit material";
+                    ? (n.GetString() ?? "Blendkit material")
+                    : "Blendkit material";
 
                 // Per-channel reads. Missing texture path → null; unbinds
                 // (we'll let the constant scalar/colour drive the slot).

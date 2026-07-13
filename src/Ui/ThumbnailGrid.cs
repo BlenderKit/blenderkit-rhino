@@ -503,7 +503,7 @@ namespace Blendkit.Rhino.Ui
                     // (name, ★ rating, FREE/FULL badge, author + avatar).
                     ThumbnailTooltip.Show(Hit, bigPath, (int)cur.X, (int)cur.Y);
                 }
-                catch (Exception ex) { global::Rhino.RhinoApp.WriteLine("[BlenderKit][thumb hover] " + ex.Message); }
+                catch (Exception ex) { global::Rhino.RhinoApp.WriteLine("[Blendkit][thumb hover] " + ex.Message); }
             };
             MouseLeave += (s, e) => ThumbnailTooltip.Hide();
         }
@@ -571,7 +571,7 @@ namespace Blendkit.Rhino.Ui
                 }
                 catch (Exception ex)
                 {
-                    global::Rhino.RhinoApp.WriteLine($"[BlenderKit][thumb] load failed: {ex.Message}");
+                    global::Rhino.RhinoApp.WriteLine($"[Blendkit][thumb] load failed: {ex.Message}");
                 }
             }));
         }

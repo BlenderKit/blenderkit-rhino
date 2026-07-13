@@ -10,7 +10,7 @@ using Blendkit.Rhino.Infra;
 namespace Blendkit.Rhino
 {
     /// <summary>
-    /// `BlenderKitProxy` — explicit user control over the viewport-proxy
+    /// `BlendkitProxy` — explicit user control over the viewport-proxy
     /// system. Modes:
     ///
     ///   Toggle  — flip the global conduit Active flag on/off.
@@ -24,13 +24,13 @@ namespace Blendkit.Rhino
     ///   Status  — report cache size + conduit Active flag.
     ///
     /// The auto-attach hook in BlendkitPanel.ImportFile / ImportForDrop
-    /// covers the BlenderKit-import case; this command is for everything
+    /// covers the Blendkit-import case; this command is for everything
     /// else (existing scene geometry, manual experimentation).
     /// </summary>
     [System.Runtime.InteropServices.Guid("c2a4e8f0-1d6f-4f10-9a31-2b9b8c1d4e02")]
     public class BlendkitProxyCommand : Command
     {
-        public override string EnglishName => "BlenderKitProxy";
+        public override string EnglishName => "BlendkitProxy";
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
@@ -58,10 +58,10 @@ namespace Blendkit.Rhino
         private static Result RunToggle(RhinoDoc doc)
         {
             var conduit = BlendkitPlugIn.Instance?.ProxyConduit;
-            if (conduit == null) { RhinoApp.WriteLine("[BlenderKit] Proxy conduit not initialised."); return Result.Failure; }
+            if (conduit == null) { RhinoApp.WriteLine("[Blendkit] Proxy conduit not initialised."); return Result.Failure; }
             conduit.Active = !conduit.Active;
             doc.Views.Redraw();
-            RhinoApp.WriteLine($"[BlenderKit] Proxy display now {(conduit.Active ? "ENABLED" : "DISABLED")}.");
+            RhinoApp.WriteLine($"[Blendkit] Proxy display now {(conduit.Active ? "ENABLED" : "DISABLED")}.");
             return Result.Success;
         }
 
@@ -80,7 +80,7 @@ namespace Blendkit.Rhino
                 var ok = ProxyMeshService.MakeProxyFor(obj);
                 if (ok) attached++; else failed++;
             }
-            RhinoApp.WriteLine($"[BlenderKit] Proxy attach: {attached} attached, {skipped} below threshold, {failed} failed.");
+            RhinoApp.WriteLine($"[Blendkit] Proxy attach: {attached} attached, {skipped} below threshold, {failed} failed.");
             doc.Views.Redraw();
             return Result.Success;
         }
@@ -94,7 +94,7 @@ namespace Blendkit.Rhino
             {
                 if (ProxyMeshService.Detach(obj.Id) != null) detached++;
             }
-            RhinoApp.WriteLine($"[BlenderKit] Proxy detach: {detached} cleared.");
+            RhinoApp.WriteLine($"[Blendkit] Proxy detach: {detached} cleared.");
             doc.Views.Redraw();
             return Result.Success;
         }
@@ -103,7 +103,7 @@ namespace Blendkit.Rhino
         {
             int n = ProxyMeshService.Count;
             ProxyMeshService.Clear();
-            RhinoApp.WriteLine($"[BlenderKit] Cleared {n} proxy mesh(es).");
+            RhinoApp.WriteLine($"[Blendkit] Cleared {n} proxy mesh(es).");
             doc.Views.Redraw();
             return Result.Success;
         }
@@ -112,7 +112,7 @@ namespace Blendkit.Rhino
         {
             var conduit = BlendkitPlugIn.Instance?.ProxyConduit;
             string state = conduit == null ? "uninitialised" : (conduit.Active ? "ENABLED" : "DISABLED");
-            RhinoApp.WriteLine($"[BlenderKit] Proxy display: {state}. Cached proxies: {ProxyMeshService.Count}.");
+            RhinoApp.WriteLine($"[Blendkit] Proxy display: {state}. Cached proxies: {ProxyMeshService.Count}.");
             return Result.Success;
         }
 

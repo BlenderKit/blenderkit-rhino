@@ -1,5 +1,5 @@
 @echo off
-REM BlenderKit for Rhino 8 - one-shot release.
+REM Blendkit for Rhino 8 - one-shot release.
 REM
 REM Usage:
 REM   release.bat <version>      e.g. release.bat 0.1.2
@@ -49,12 +49,12 @@ set YAK_EXE=C:\Program Files\Rhino 8\System\Yak.exe
 REM csproj is now NuGet-pinned to RhinoCommon 8.0, so yak tags both
 REM builds as rh8_0 (down from rh8_<build-machine-SR>). Filenames lock
 REM in here so we know exactly what to push after pack.
-set YAK_FILE_WIN=%RHINO_DIR%\build\Release\packages\blenderkit-%NEW_VERSION%-rh8_0-any.yak
-set YAK_FILE_MAC=%RHINO_DIR%\build\Release\packages\blenderkit-%NEW_VERSION%-rh8_0-mac.yak
+set YAK_FILE_WIN=%RHINO_DIR%\build\Release\packages\blendkit-%NEW_VERSION%-rh8_0-any.yak
+set YAK_FILE_MAC=%RHINO_DIR%\build\Release\packages\blendkit-%NEW_VERSION%-rh8_0-mac.yak
 
 echo.
 echo ==================================================
-echo  BlenderKit for Rhino 8 - release %NEW_VERSION%
+echo  Blendkit for Rhino 8 - release %NEW_VERSION%
 echo ==================================================
 echo  csproj    : %CSPROJ%
 echo  manifests : %MANIFEST_WIN%
@@ -175,11 +175,11 @@ popd >nul
 
 echo.
 echo ==================================================
-echo  Released BlenderKit %NEW_VERSION%.
+echo  Released Blendkit %NEW_VERSION%.
 echo  - win .yak: %YAK_FILE_WIN%
 echo  - mac .yak: %YAK_FILE_MAC%
 echo  - tag     : v%NEW_VERSION% (pushed to origin)
-echo  - live    : https://yak.rhino3d.com/ (search "BlenderKit")
+echo  - live    : https://yak.rhino3d.com/ (search "Blendkit")
 echo ==================================================
 
 exit /b 0

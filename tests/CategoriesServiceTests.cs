@@ -12,7 +12,7 @@ namespace Blendkit.Rhino.Tests
     /// </summary>
     public class CategoriesServiceTests
     {
-        // Trimmed shape of the BlenderKit /categories response we care about.
+        // Trimmed shape of the Blendkit /categories response we care about.
         private const string SampleResponse = @"
         [
           {
@@ -133,7 +133,7 @@ namespace Blendkit.Rhino.Tests
         [Fact]
         public void Ingest_handles_results_envelope()
         {
-            // BlenderKit's REST /api/v1/categories/ wraps the array in
+            // Blendkit's REST /api/v1/categories/ wraps the array in
             // {"count":..., "results":[...]}. The Go client currently
             // unwraps before forwarding, but if it ever stops (or another
             // host adds a wrapper) we still want categories to load.

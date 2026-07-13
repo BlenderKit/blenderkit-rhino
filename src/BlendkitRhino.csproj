@@ -13,11 +13,12 @@
     <UseWPF>false</UseWPF>
     <RootNamespace>Blendkit.Rhino</RootNamespace>
     <!--
-      Internal assembly / .rhp filename. Renamed from BlenderKitRhino
-      to Blendkit-* (the project's internal identifier rename); the
-      user-visible plug-in name stays "BlenderKit" via the explicit
-      <AssemblyTitle>/<Product> overrides below so the entry in
-      Rhino > Options > Plug-ins doesn't suddenly say "BlendkitRhino".
+      Internal assembly / .rhp filename. Stays BlendkitRhino: the .rhp
+      filename and assembly identity are internal and were already on
+      the Blendkit spelling, so there's no reason to churn them (and the
+      plug-in Guid below is what Rhino keys installs on anyway). The
+      user-visible plug-in name is set to "Blendkit" via the explicit
+      <Title>/<AssemblyTitle>/<Product> overrides below.
     -->
     <AssemblyName>BlendkitRhino</AssemblyName>
     <!-- Rhino loads plugins from .rhp files; rename the .dll output here. -->
@@ -32,13 +33,13 @@
       AssemblyTitle/Product from AssemblyName, leaking the internal
       "BlendkitRhino" name into the UI).
     -->
-    <Title>BlenderKit</Title>
-    <AssemblyTitle>BlenderKit</AssemblyTitle>
-    <Product>BlenderKit</Product>
-    <Description>BlenderKit asset browser Ă˘â‚¬â€ť Rhino 8 port.</Description>
+    <Title>Blendkit</Title>
+    <AssemblyTitle>Blendkit</AssemblyTitle>
+    <Product>Blendkit</Product>
+    <Description>Blendkit (formerly BlenderKit) asset browser - Rhino 8 port.</Description>
     <Version>0.1.3</Version>
-    <Authors>BlenderKit</Authors>
-    <Company>BlenderKit</Company>
+    <Authors>Blendkit</Authors>
+    <Company>Blendkit</Company>
     <!--
       Define WINDOWS_BUILD only on the Windows target so we can guard
       Win32 P/Invokes (mouse-wheel hook, GetCursorPos) at compile time.
@@ -53,7 +54,7 @@
     System.Drawing.Icon argument. Ship-wise we pass null, but the reference
     still has to resolve at compile time.
   -->
-  <!-- BlenderKit logo embedded as a manifest resource so the .rhp can load
+  <!-- Blendkit logo embedded as a manifest resource so the .rhp can load
        it via Assembly.GetManifestResourceStream and pass an Icon to
        Panels.RegisterPanel. -->
   <ItemGroup>

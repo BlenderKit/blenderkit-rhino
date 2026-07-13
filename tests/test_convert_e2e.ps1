@@ -1,5 +1,5 @@
 ﻿# test_convert_e2e.ps1 — drive a .blend -> .glb conversion through the
-# BlenderKit Go client *without* Rhino in the loop. Same HTTP shape the
+# Blendkit Go client *without* Rhino in the loop. Same HTTP shape the
 # Rhino panel uses (BlenderConvertService + the panel's /report poll),
 # so when convert breaks for the user we can reproduce + bisect here
 # instead of round-tripping through Rhino startup.
@@ -94,7 +94,7 @@ $ownedClient = $null
 if ($activePort -eq 0) {
     # No live client. Spawn the deployed one, or one the user pointed at.
     if (-not $ClientExe) {
-        $deployed = 'C:\Users\Intel\AppData\Roaming\McNeel\Rhinoceros\8.0\Plug-ins\BlenderKit\client\client.exe'
+        $deployed = 'C:\Users\Intel\AppData\Roaming\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit\client\client.exe'
         if (Test-Path $deployed) { $ClientExe = $deployed }
     }
     if (-not $ClientExe -or -not (Test-Path $ClientExe)) {
@@ -105,7 +105,7 @@ if ($activePort -eq 0) {
     Write-Host "Spawning Go client: $ClientExe"
     # Pick a port that's free — start with the first candidate.
     $spawnPort = $candidatePorts[0]
-    $args = @('--port', "$spawnPort", '--server', 'https://www.blenderkit.com', '--proxy_which', 'SYSTEM', '--ssl_context', 'ENABLED', '--version', 'e2e-test', '--software', 'TestHarness', '--pid', "$PID")
+    $args = @('--port', "$spawnPort", '--server', 'https://www.blendkit.com', '--proxy_which', 'SYSTEM', '--ssl_context', 'ENABLED', '--version', 'e2e-test', '--software', 'TestHarness', '--pid', "$PID")
     $ownedClient = Start-Process -FilePath $ClientExe -ArgumentList $args -PassThru -WindowStyle Hidden
     # Wait up to 10s for it to come up + have the route.
     for ($i = 0; $i -lt 50; $i++) {

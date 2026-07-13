@@ -36,14 +36,14 @@ def main():
     port = client_lib.discover_port()
     if port is None:
         Rhino.RhinoApp.WriteLine(
-            "[BlenderKit] No Go client reachable. Start one manually from "
+            "[Blendkit] No Go client reachable. Start one manually from "
             "../client/client.exe, or install the .rhp which spawns it."
         )
     else:
-        Rhino.RhinoApp.WriteLine(f"[BlenderKit] Go client on port {port}.")
+        Rhino.RhinoApp.WriteLine(f"[Blendkit] Go client on port {port}.")
 
     form = Form()
-    form.Title = "BlenderKit (dev window)"
+    form.Title = "Blendkit (dev window)"
     form.ClientSize = Size(400, 600)
     form.Content = panel.build_panel_content()
     form.Owner = Rhino.UI.RhinoEtoApp.MainWindow

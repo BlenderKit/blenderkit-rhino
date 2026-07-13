@@ -3,10 +3,10 @@ using Eto.Drawing;
 namespace Blendkit.Rhino.Infra
 {
     /// <summary>
-    /// BlenderKit's UI color palette, ported verbatim from
+    /// Blendkit's UI color palette, ported verbatim from
     /// blenderkit/colors.py. Floats 0-1 → bytes 0-255. Use these instead of
     /// guessed greens/blues so the Rhino plugin looks like the rest of the
-    /// BlenderKit family (Blender addon, web gallery).
+    /// Blendkit family (Blender addon, web gallery).
     /// </summary>
     public static class BkColors
     {
@@ -27,7 +27,7 @@ namespace Blendkit.Rhino.Infra
         public static readonly Color ActiveBlue  = C(0.7, 0.8, 1.0, 1.0);
         public static readonly Color GreenPrice  = C(0.42, 0.49, 0.19, 1.0); // legacy "free" (dark olive)
         public static readonly Color PurplePrice = C(0.59, 0.05, 0.82, 1.0); // paid
-        // Bright green badge used on blenderkit.com's gallery for free
+        // Bright green badge used on blendkit.com's gallery for free
         // assets — much more readable on a thumbnail than the legacy olive.
         public static readonly Color FreeBadge   = C(0.0, 0.66, 0.34, 1.0);
 

@@ -6,7 +6,7 @@ namespace Blendkit.Rhino.Infra
     /// <summary>
     /// Find a PRX / PRXC sidecar for a freshly-imported asset.
     ///
-    /// BlenderKit drops the asset's downloads (.glb, .blend, .prxc, …)
+    /// Blendkit drops the asset's downloads (.glb, .blend, .prxc, …)
     /// into a per-asset directory like
     /// <c>blenderkit_data/models/&lt;asset-base-id-prefix&gt;_&lt;uuid&gt;/</c>.
     /// Each file has its own UUID stem — the .glb and the .prxc do NOT
@@ -48,7 +48,7 @@ namespace Blendkit.Rhino.Infra
                 if (File.Exists(prx)) return prx;
             }
 
-            // (2) Single-sibling-in-folder fallback. BlenderKit's asset
+            // (2) Single-sibling-in-folder fallback. Blendkit's asset
             // download dir holds the per-asset files; if there's just
             // one .prxc, it's unambiguous. Prefer .prxc over .prx.
             // .EnumerateFiles is cheap — directories are small.
