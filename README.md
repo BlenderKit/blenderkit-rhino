@@ -60,7 +60,7 @@ final result:
   the occasional `.blend` that doesn't convert cleanly may import incompletely.
 
 Found a bug? Please report it at
-<https://github.com/BlenderKit/blenderkit-rhino/issues> — it's an alpha and
+<https://github.com/BlenderKit/blendkit-rhino/issues> — it's an alpha and
 reports genuinely help.
 
 ---
