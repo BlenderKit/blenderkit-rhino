@@ -50,6 +50,26 @@ namespace Blendkit.Rhino.Infra
         private static readonly Color InnerColor  = Color.FromArgb(160, 60, 220, 60);
         private static readonly Color InnerEdge   = Color.FromArgb(220, 60, 220, 60);
 
+        /// <summary>
+        /// A tiny minimum extent, ≈1 mm expressed in the active document's
+        /// units. Used to floor the drawn preview so a missing/degenerate
+        /// bbox still yields a visible, non-degenerate box.
+        ///
+        /// This replaces a hardcoded "1.0": Size is already in document
+        /// units, so a literal 1.0 floor means 1 mm in a millimetre doc but
+        /// 1 METRE in a metre doc — which clamped every asset under 2 m up
+        /// to a ~2×2×1 m preview box. Scaling 1 mm into the doc's units
+        /// keeps the floor physically tiny regardless of unit system.
+        /// </summary>
+        private static double UnitFloor()
+        {
+            var doc = global::Rhino.RhinoDoc.ActiveDoc;
+            if (doc == null) return 1.0;
+            var mm = global::Rhino.RhinoMath.UnitScale(
+                global::Rhino.UnitSystem.Millimeters, doc.ModelUnitSystem);
+            return mm > 0 ? mm : 1.0;
+        }
+
         protected override void CalculateBoundingBox(CalculateBoundingBoxEventArgs e)
         {
             var b = new BoundingBox(
@@ -84,9 +104,14 @@ namespace Blendkit.Rhino.Infra
                 // Anchor the label above the surface for material/HDR
                 // (no z-extruded box to clear); for the model box, rest
                 // it on top of the cube.
+                // Offsets are in document units, so the old raw 1.0/5/50
+                // constants floated the label metres away in a metre doc.
+                // Scale them through UnitFloor() (≈1 mm) so the label sits
+                // just above the box regardless of unit system.
+                var lf = UnitFloor();
                 var anchorOffset = Style == DragStyle.ModelBox
-                    ? new Vector3d(0, 0, Math.Max(Size.Z, 1.0) + 5)
-                    : new Vector3d(0, 0, Math.Max(Size.Z, 50) * 0.4);
+                    ? new Vector3d(0, 0, Math.Max(Size.Z, lf) + lf * 5)
+                    : new Vector3d(0, 0, Math.Max(Size.Z, lf * 50) * 0.4);
                 var screen = e.Viewport.WorldToClient(Target + anchorOffset);
                 e.Display.Draw2dText(Label, Color.White,
                     new Point2d(screen.X, screen.Y - 14), middleJustified: true, 14);
@@ -109,9 +134,13 @@ namespace Blendkit.Rhino.Infra
 
         private void DrawModelBox(DrawEventArgs e, Plane basePlane)
         {
-            var sx = Math.Max(Size.X / 2.0, 1.0);
-            var sy = Math.Max(Size.Y / 2.0, 1.0);
-            var sz = Math.Max(Size.Z, 1.0);
+            // Floor each extent at ~1 mm (in doc units), NOT a raw 1.0 —
+            // see UnitFloor(). Size is the asset's real bbox in document
+            // units, so this only kicks in for genuinely degenerate boxes.
+            var floor = UnitFloor();
+            var sx = Math.Max(Size.X / 2.0, floor);
+            var sy = Math.Max(Size.Y / 2.0, floor);
+            var sz = Math.Max(Size.Z, floor);
 
             var outerBox = new Box(
                 basePlane,
@@ -145,7 +174,9 @@ namespace Blendkit.Rhino.Infra
             // over, not place new geometry. Radius scales with the
             // largest XY extent of the asset bbox so it reads clearly
             // on both small swatches and large props.
-            var radius = Math.Max(Math.Max(Size.X, Size.Y) * 0.6, 5.0);
+            // Minimum radius ≈5 mm in doc units (was a raw 5.0 = 5 m in a
+            // metre doc, which drew a giant disc for small material swatches).
+            var radius = Math.Max(Math.Max(Size.X, Size.Y) * 0.6, UnitFloor() * 5);
             // Use a pulsing thickness for the outer ring — actually a
             // pair of concentric circles is enough to read well.
             var inner = new Circle(basePlane, radius * 0.7);

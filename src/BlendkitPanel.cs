@@ -3360,7 +3360,19 @@ namespace Blendkit.Rhino
         /// </summary>
         private static global::Rhino.Geometry.Vector3d BBoxFromHit(JsonElement hit)
         {
-            var fallback = new global::Rhino.Geometry.Vector3d(50, 50, 50);
+            // Blendkit dimensions are in meters. Convert to the doc's unit.
+            // Compute the scale first so BOTH the real bbox and the no-bbox
+            // fallback are expressed in document units — the fallback used
+            // to be a raw (50,50,50) that rendered as a 50 m cube in a
+            // metre doc (or 50 mm in a mm doc).
+            var doc = global::Rhino.RhinoDoc.ActiveDoc;
+            var scale = doc != null
+                ? global::Rhino.RhinoMath.UnitScale(global::Rhino.UnitSystem.Meters, doc.ModelUnitSystem)
+                : 1.0;
+            // Sensible physical default (~0.3 m) when the asset carries no
+            // usable bbox, scaled into the doc's units.
+            var fallback = new global::Rhino.Geometry.Vector3d(0.3 * scale, 0.3 * scale, 0.3 * scale);
+
             if (!hit.TryGetProperty("dictParameters", out var p) || p.ValueKind != JsonValueKind.Object)
                 return fallback;
             double Get(string k)
@@ -3375,11 +3387,6 @@ namespace Blendkit.Rhino
             double mnZ = Get("boundBoxMinZ"), mxZ = Get("boundBoxMaxZ");
             if (double.IsNaN(mnX) || double.IsNaN(mxX)) return fallback;
 
-            // Blendkit dimensions are in meters. Convert to the doc's unit.
-            var doc = global::Rhino.RhinoDoc.ActiveDoc;
-            var scale = doc != null
-                ? global::Rhino.RhinoMath.UnitScale(global::Rhino.UnitSystem.Meters, doc.ModelUnitSystem)
-                : 1.0;
             return new global::Rhino.Geometry.Vector3d(
                 (mxX - mnX) * scale,
                 (mxY - mnY) * scale,
