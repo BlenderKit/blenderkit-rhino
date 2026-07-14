@@ -37,7 +37,7 @@
     <AssemblyTitle>Blendkit</AssemblyTitle>
     <Product>Blendkit</Product>
     <Description>Blendkit (formerly BlenderKit) asset browser - Rhino 8 port.</Description>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <Authors>Blendkit</Authors>
     <Company>Blendkit</Company>
     <!--
