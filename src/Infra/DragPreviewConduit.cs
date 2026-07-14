@@ -45,6 +45,31 @@ namespace Blendkit.Rhino.Infra
         public enum DragStyle { ModelBox, MaterialDisc, HdrNothing }
         public DragStyle Style = DragStyle.ModelBox;
 
+        // When true, draw a clickable ✕ "cancel" dot near the box. The panel
+        // sets this after the drop lands (while the deferred download/convert
+        // runs) and a MouseCallback hit-tests clicks against
+        // <see cref="CancelAnchorWorld"/>. Radius of the click hotspot is
+        // ~16 px (matches the DrawDot size).
+        public bool ShowCancel;
+
+        /// <summary>
+        /// World point the cancel ✕ dot is drawn at (top-right of the box, a
+        /// little above it). The panel's MouseCallback projects this into the
+        /// clicked viewport to hit-test — so draw and hit-test stay in sync.
+        /// </summary>
+        public Point3d CancelAnchorWorld()
+        {
+            var n = Normal.IsZero ? Vector3d.ZAxis : Normal;
+            var plane = new Plane(Target, n);
+            if (Math.Abs(SpinRadians) > 1e-6)
+                plane.Rotate(SpinRadians, n, Target);
+            var floor = UnitFloor();
+            var sx = Math.Max(Size.X / 2.0, floor);
+            var sz = Math.Max(Size.Z, floor);
+            // +X edge (right), top, nudged up so it clears the box + label.
+            return plane.PointAt(sx, 0, sz + floor * 8);
+        }
+
         private static readonly Color OuterColor  = Color.FromArgb( 60, 0, 120, 0);
         private static readonly Color OuterEdge   = Color.FromArgb(220, 0, 180, 0);
         private static readonly Color InnerColor  = Color.FromArgb(160, 60, 220, 60);
@@ -130,6 +155,18 @@ namespace Blendkit.Rhino.Infra
                         new Point2d(screen.X, screen.Y + 4), middleJustified: true, 11);
                 }
             }
+
+            // Clickable cancel ✕ — a red text-dot at CancelAnchorWorld. The
+            // panel's MouseCallback watches for clicks on it. DrawDot renders
+            // a fixed pixel-size dot regardless of zoom, so the hit-test
+            // radius stays stable.
+            if (ShowCancel)
+            {
+                // Neutral grey — a red dot reads as an error/warning; this is
+                // just a quiet "click to cancel" affordance.
+                e.Display.DrawDot(CancelAnchorWorld(), "✕",
+                    Color.FromArgb(90, 90, 90), Color.White);
+            }
         }
 
         private void DrawModelBox(DrawEventArgs e, Plane basePlane)
@@ -151,6 +188,18 @@ namespace Blendkit.Rhino.Infra
             if (outerBrep != null)
                 e.Display.DrawBrepShaded(outerBrep, new DisplayMaterial(OuterColor, 0.7));
             e.Display.DrawBox(outerBox, OuterEdge, 2);
+
+            // Front-direction arrow on the ground, matching the Blender add-on
+            // (ui_bgl.draw_bbox): a triangle from the two front-bottom corners
+            // (local -Y edge) converging to a tip that sticks out in front, so
+            // the user can see — and mousewheel-rotate — which way the model
+            // faces. "Front" is local -Y, same convention as the add-on.
+            var frontL = basePlane.PointAt(-sx, -sy);
+            var frontR = basePlane.PointAt(sx, -sy);
+            var tip     = basePlane.PointAt(0, -sy - sx);   // out in front by half-width
+            e.Display.DrawLine(frontL, tip, OuterEdge, 2);
+            e.Display.DrawLine(frontR, tip, OuterEdge, 2);
+            e.Display.DrawLine(frontL, frontR, OuterEdge, 2);
 
             // Inner box: same XY footprint, Z scales by progress.
             if (Progress > 0.001)

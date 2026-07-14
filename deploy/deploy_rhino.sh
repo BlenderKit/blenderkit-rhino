@@ -59,6 +59,10 @@ REPO_ROOT="$(cd "$RHINO_DIR/.." && pwd)"
 #                                          this one
 if [ -n "${BLENDKIT_CLIENT_DIR:-}" ]; then
     CLIENT_DIR="$BLENDKIT_CLIENT_DIR"
+elif [ -d "$RHINO_DIR/bk_client/client" ]; then
+    # Current layout: the unified Blendkit-Client (github.com/BlenderKit/bk_client)
+    # is a git submodule of this repo. Its Go source + recipes live here.
+    CLIENT_DIR="$RHINO_DIR/bk_client/client"
 elif [ -d "$RHINO_DIR/../client" ]; then
     CLIENT_DIR="$RHINO_DIR/../client"
 elif [ -d "$RHINO_DIR/../source_addon/blenderkit/client" ]; then
@@ -72,6 +76,18 @@ else
 fi
 # Normalise so log output and error messages don't show ../.. paths.
 CLIENT_DIR="$(cd "$CLIENT_DIR" 2>/dev/null && pwd || echo "$CLIENT_DIR")"
+
+# Unified client binary name. Matches bk_client's dev.py BUILD_MATRIX
+# (`bk_client-{os}-{arch}`) and the plug-in's CandidateClientBinaryNames
+# probe (which now tries bk_client-* first). Build + deploy under exactly
+# this name so the plug-in launches the freshly-built client instead of a
+# stale legacy-named binary that happens to be in the same folder.
+case "$(uname -m)" in
+    arm64|aarch64) CLIENT_NAME_ARCH=arm64 ;;
+    x86_64|amd64)  CLIENT_NAME_ARCH=x86_64 ;;
+    *)             CLIENT_NAME_ARCH=arm64 ;;
+esac
+CLIENT_BIN_NAME="bk_client-macos-${CLIENT_NAME_ARCH}"
 TARGET="$HOME/Library/Application Support/McNeel/Rhinoceros/8.0/Plug-ins/Blendkit"
 # Rhino 8 on macOS ships as "Rhino 8.app" (the older "Rhinoceros 8.app"
 # bundle name from earlier installers is also accepted as a fallback).
@@ -128,7 +144,22 @@ fi
 echo " rhino app  : $RHINO_APP"
 
 if [ "$DO_KILL" = "1" ]; then
-    pkill -x Rhinoceros || true
+    # Quit Rhino CLEANLY so it writes its normal-shutdown marker and does NOT
+    # show the "recover unsaved files?" crash dialog on next launch. AppleScript
+    # 'quit saving no' asks Rhino to exit and discard the unsaved doc without a
+    # save prompt. If it doesn't exit within a few seconds (older builds ignore
+    # 'saving no'), fall back to pkill.
+    if pgrep -x Rhinoceros >/dev/null 2>&1; then
+        osascript -e 'tell application id "com.mcneel.rhinoceros.8" to quit saving no' >/dev/null 2>&1 &
+        for _i in 1 2 3 4 5 6 7 8 9 10; do
+            pgrep -x Rhinoceros >/dev/null 2>&1 || break
+            sleep 0.5
+        done
+        if pgrep -x Rhinoceros >/dev/null 2>&1; then
+            echo "[deploy] Rhino didn't quit gracefully — forcing (crash dialog may appear next launch)."
+            pkill -x Rhinoceros || true
+        fi
+    fi
     sleep 1
 fi
 
@@ -164,14 +195,14 @@ if [ "$DO_BUILD_CLIENT" = "1" ]; then
         echo "[deploy] WARNING: 'go' not on PATH — skipping client build (existing $CLIENT_DIR/client will be used if present)."
     else
         if [ -n "$BUILD_GOARCH" ]; then
-            echo "[deploy] Building Go client (darwin/$BUILD_GOARCH, host $HOST_ARCH)..."
-            ( cd "$CLIENT_DIR" && GOTOOLCHAIN=auto GOOS=darwin GOARCH="$BUILD_GOARCH" go build -o client . ) || {
+            echo "[deploy] Building Go client $CLIENT_BIN_NAME (darwin/$BUILD_GOARCH, host $HOST_ARCH)..."
+            ( cd "$CLIENT_DIR" && GOTOOLCHAIN=auto GOOS=darwin GOARCH="$BUILD_GOARCH" go build -o "$CLIENT_BIN_NAME" . ) || {
                 echo "[deploy] ERROR: go build failed in $CLIENT_DIR — see output above."
                 exit 1
             }
         else
-            echo "[deploy] Building Go client (host default, uname -m=$HOST_ARCH)..."
-            ( cd "$CLIENT_DIR" && GOTOOLCHAIN=auto go build -o client . ) || {
+            echo "[deploy] Building Go client $CLIENT_BIN_NAME (host default, uname -m=$HOST_ARCH)..."
+            ( cd "$CLIENT_DIR" && GOTOOLCHAIN=auto go build -o "$CLIENT_BIN_NAME" . ) || {
                 echo "[deploy] ERROR: go build failed in $CLIENT_DIR — see output above."
                 exit 1
             }
@@ -273,31 +304,29 @@ deploy_to() {
     cp -R "$RHINO_DIR/python/blendkit_rhino" "$dest/python/" 2>/dev/null || true
     cp -f "$RHINO_DIR/python/"*.py "$dest/python/" 2>/dev/null || true
 
-    # Go client binary. Probe order matches the runtime probe in
-    # BlendkitPlugIn.EnsureGoClient — first the macOS-style plain
-    # `client`, then `.exe` for Windows-cross-built binaries that
-    # happen to live in the same client/ folder. We also delete any
-    # stale client.exe in the destination when we have a native
-    # macOS binary, otherwise both end up side-by-side and the user
-    # has to wonder which one Rhino actually launches. (The C#
-    # probe order is `client.exe` first, so a leftover .exe on a
-    # Mac would actively break things.)
-    if [ -f "$CLIENT_DIR/client" ]; then
-        cp -f "$CLIENT_DIR/client" "$dest/client/client"
-        chmod +x "$dest/client/client"
-        rm -f "$dest/client/client.exe"
-        echo "[deploy]    Go client (macOS) copied from $CLIENT_DIR."
-    elif [ -f "$CLIENT_DIR/client_darwin_arm64" ]; then
-        cp -f "$CLIENT_DIR/client_darwin_arm64" "$dest/client/client"
-        chmod +x "$dest/client/client"
-        rm -f "$dest/client/client.exe"
-        echo "[deploy]    Go client (darwin/arm64) copied as client from $CLIENT_DIR."
-    elif [ -f "$CLIENT_DIR/client.exe" ]; then
-        cp -f "$CLIENT_DIR/client.exe" "$dest/client/client.exe"
-        echo "[deploy]    WARNING: only Windows client.exe found in $CLIENT_DIR — install macOS client."
+    # Go client binary. We deploy under the unified name ($CLIENT_BIN_NAME,
+    # e.g. bk_client-macos-arm64), which the plug-in's CandidateClientBinaryNames
+    # probes first. Crucially we also PURGE every stale legacy-named binary in
+    # the destination: the plug-in picks the first name that exists, so a
+    # leftover `client` / `blenderkit-client-*` / `client.exe` from an older
+    # deploy would keep launching (and silently run an old embedded recipe)
+    # even after we ship a fresh client. This was a real footgun.
+    src_bin=""
+    if [ -f "$CLIENT_DIR/$CLIENT_BIN_NAME" ]; then
+        src_bin="$CLIENT_DIR/$CLIENT_BIN_NAME"
+    elif [ -f "$CLIENT_DIR/client" ]; then
+        src_bin="$CLIENT_DIR/client"   # plain `go build` output (dev fallback)
+    fi
+    if [ -n "$src_bin" ]; then
+        # Remove stale binaries so the freshly-built one is unambiguously chosen.
+        rm -f "$dest/client/client" "$dest/client/client.exe" \
+              "$dest/client/blenderkit-client-"* "$dest/client/bk_client-"*
+        cp -f "$src_bin" "$dest/client/$CLIENT_BIN_NAME"
+        chmod +x "$dest/client/$CLIENT_BIN_NAME"
+        echo "[deploy]    Go client deployed as $CLIENT_BIN_NAME (from $(basename "$src_bin"))."
     else
-        echo "[deploy]    WARNING: Go client not found at $CLIENT_DIR/."
-        echo "[deploy]             Build it: (cd \"$CLIENT_DIR\" && go build)"
+        echo "[deploy]    WARNING: Go client binary not found at $CLIENT_DIR/$CLIENT_BIN_NAME."
+        echo "[deploy]             Build it: (cd \"$CLIENT_DIR\" && go build -o $CLIENT_BIN_NAME .)"
         echo "[deploy]             Or set BLENDKIT_CLIENT_DIR to the folder containing the client binary."
     fi
 
@@ -374,5 +403,15 @@ fi
 
 echo "[deploy] Done."
 if [ "$DO_LAUNCH" = "1" ] && [ -d "$RHINO_APP" ]; then
-    open "$RHINO_APP"
+    # Launch straight into a blank .3dm so Rhino skips its "new model / open
+    # file" start dialog and comes up on an empty scene — the fast path for
+    # dev/testing. Create the blank once if missing (an empty File3dm; here
+    # just touch a copy of any existing one, else fall back to plain open).
+    BLANK_3DM="$HOME/blenderkit_data/blank.3dm"
+    if [ -f "$BLANK_3DM" ]; then
+        open -a "$RHINO_APP" "$BLANK_3DM"
+    else
+        echo "[deploy] (no $BLANK_3DM — opening Rhino normally; it may show the start dialog)"
+        open "$RHINO_APP"
+    fi
 fi

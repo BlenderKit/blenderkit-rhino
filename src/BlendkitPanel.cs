@@ -95,6 +95,13 @@ namespace Blendkit.Rhino
         // when no sidecar exists the import path falls back to
         // decimation, so this flag is safe to enable preemptively.
         private readonly CheckBox _useProxor = new CheckBox { Checked = false };
+        // Place as instances (blocks): when checked (default), repeated drops
+        // of the same asset become InstanceObjects of a single shared
+        // InstanceDefinition — shared geometry + materials, tiny file growth,
+        // instant re-drops. When unchecked, each drop is an independent
+        // group-copy (full per-sub-object material control, no sharing).
+        // Mirrors the Blender add-on's "linked" vs "append copy" behavior.
+        private readonly CheckBox _useInstances = new CheckBox { Checked = true };
         // Cascading category picker: a button that opens a ContextMenu built
         // dynamically from CategoriesService.TreeForAssetType. Closer to the
         // Blender addon's nested category enum than a single flat dropdown.
@@ -654,6 +661,19 @@ namespace Blendkit.Rhino
             }
             advanced.AddRow(proxorRow);
 
+            // Place-as-instances (blocks) row. Default on: repeated drops of
+            // the same asset share one InstanceDefinition. Off = independent
+            // group-copies (per-sub-object material control, no sharing).
+            var instancesRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(WrapCheck(_useInstances, "Place as instances (shared blocks; off = independent copies)"));
+                inner.EndHorizontal();
+                instancesRow.Content = inner;
+            }
+            advanced.AddRow(instancesRow);
+
             // Wire up the strip-materials side effects:
             //   1. Toggle visibility of the decimate row.
             //   2. Grey out the resolution dropdown — but only when the
@@ -677,10 +697,13 @@ namespace Blendkit.Rhino
                 Settings.SetBool("decimate_polygons", _decimatePolygons.Checked == true);
             _useProxor.CheckedChanged += (s, e) =>
                 Settings.SetBool("import_use_proxor", _useProxor.Checked == true);
+            _useInstances.CheckedChanged += (s, e) =>
+                Settings.SetBool("import_use_instances", _useInstances.Checked == true);
             // Restore from settings.
             _stripMaterials.Checked = Settings.GetBool("strip_materials");
             _decimatePolygons.Checked = Settings.GetBool("decimate_polygons");
             _useProxor.Checked = Settings.GetBool("import_use_proxor");
+            _useInstances.Checked = Settings.GetBool("import_use_instances", true); // default on
             // Apply the side effects once on construction so the UI matches
             // the restored state (CheckedChanged doesn't fire from the
             // .Checked = ... assignment above on every Eto backend).
@@ -1457,7 +1480,13 @@ namespace Blendkit.Rhino
             }
             else if (type == "run_blender_script" || type == "blend_to_glb")
             {
-                if (status == "finished") msg = "Converted — drop to place";
+                // In the deferred model the drop point is already captured when
+                // the convert runs, so a finished convert auto-places — say
+                // "Placing…", not the misleading "drop to place" (which implies
+                // the user must drop again). Only the rare no-point case (cached
+                // click flow) genuinely waits.
+                if (status == "finished")
+                    msg = drop.DropPoint.HasValue ? "Placing…" : "Converted — drop to place";
                 else if (status == "error") msg = "Error: convert failed";
                 else msg = "Converting (Blender)…";
             }
@@ -1509,6 +1538,110 @@ namespace Blendkit.Rhino
                 _pendingMaterialDrops.TryRemove(drop.DownloadTaskId, out _);
             BkLog.W($"CancelDrop: removed drop '{drop.AssetName}' (download={drop.DownloadTaskId}, convert={drop.ConvertTaskId})");
             RefreshDownloadsButton();
+            RefreshCancelWatcher();
+        }
+
+        // ===== Viewport ✕ cancel button ==========================================
+        //
+        // After a drop lands, the preview box lingers at the drop point while
+        // the deferred download/convert/import runs. DragPreviewConduit draws a
+        // clickable ✕ dot on the box (Preview.ShowCancel); this MouseCallback
+        // hit-tests left-clicks against each such box's CancelAnchorWorld and
+        // cancels the matching drop. Enabled only while a box wants a ✕.
+        private CancelDotWatcher _cancelWatcher;
+
+        private class CancelDotWatcher : global::Rhino.UI.MouseCallback
+        {
+            private readonly BlendkitPanel _panel;
+            public CancelDotWatcher(BlendkitPanel panel) { _panel = panel; }
+
+            protected override void OnMouseDown(global::Rhino.UI.MouseCallbackEventArgs e)
+            {
+                try
+                {
+                    if (e.MouseButton != global::Rhino.UI.MouseButton.Left
+                        || e.View == null) { base.OnMouseDown(e); return; }
+                    var vp = e.View.ActiveViewport;
+                    var click = e.ViewportPoint; // physical pixels, System.Drawing.Point
+                    foreach (var d in _panel._drops.ToArray())
+                    {
+                        if (d?.Preview == null || !d.Preview.ShowCancel) continue;
+                        var scr = vp.WorldToClient(d.Preview.CancelAnchorWorld());
+                        double dx = scr.X - click.X, dy = scr.Y - click.Y;
+                        if (dx * dx + dy * dy <= 16.0 * 16.0)
+                        {
+                            _panel.CancelDrop(d);
+                            SetStatus($"Cancelled '{d.AssetName}'.");
+                            e.Cancel = true; // swallow — don't start a Rhino click op
+                            return;
+                        }
+                    }
+                }
+                catch { /* never throw from a mouse event */ }
+                base.OnMouseDown(e);
+            }
+
+            private void SetStatus(string s) { try { _panel.SetStatus(s); } catch { } }
+        }
+
+        /// <summary>
+        /// Enable the ✕-cancel MouseCallback iff at least one active drop is
+        /// showing a cancel dot; disable it otherwise. Cheap to call on every
+        /// drop lifecycle change.
+        /// </summary>
+        private void RefreshCancelWatcher()
+        {
+            bool any = false;
+            foreach (var d in _drops)
+                if (d?.Preview != null && d.Preview.ShowCancel) { any = true; break; }
+            if (any)
+            {
+                if (_cancelWatcher == null) _cancelWatcher = new CancelDotWatcher(this);
+                _cancelWatcher.Enabled = true;
+            }
+            else if (_cancelWatcher != null)
+            {
+                _cancelWatcher.Enabled = false;
+            }
+        }
+
+        // ===== Stuck-drop reaper =================================================
+        //
+        // A safety net: if a download/convert hangs (dead client, wedged
+        // Blender), the drop would otherwise sit in the downloads list — and
+        // its preview box in the viewport — forever. The reaper clears any drop
+        // whose post-drop work has been in flight past ReapTimeoutMs. It runs
+        // only while there's active work, and stops itself when the list drains.
+        private Eto.Forms.UITimer _reaperTimer;
+        private const int ReapTimeoutMs = 120_000; // 2 min = definitely hung
+
+        private void EnsureReaperRunning()
+        {
+            if (_reaperTimer == null)
+            {
+                _reaperTimer = new Eto.Forms.UITimer { Interval = 5.0 }; // 5 s cadence
+                _reaperTimer.Elapsed += (s, e) => ReapStuckDrops();
+            }
+            _reaperTimer.Start();
+        }
+
+        private void ReapStuckDrops()
+        {
+            int now = Environment.TickCount;
+            bool anyActive = false;
+            foreach (var d in _drops.ToArray())
+            {
+                if (d == null || d.Done || d.WorkStartTick == 0) continue;
+                int age = now - d.WorkStartTick; // wraps correctly for < ~24 days
+                if (age > ReapTimeoutMs)
+                {
+                    BkLog.W($"reaper: clearing stuck drop '{d.AssetName}' after {age / 1000}s (status={d.Status})");
+                    SetStatus($"'{d.AssetName}' timed out after {age / 1000}s — cleared.");
+                    CancelDrop(d); // clears preview + removes + drops task bindings
+                }
+                else anyActive = true;
+            }
+            if (!anyActive) _reaperTimer?.Stop();
         }
 
         /// <summary>
@@ -3289,7 +3422,12 @@ namespace Blendkit.Rhino
             // point. Drag starts immediately, status reflects ready.
             string baseId = "";
             if (hit.TryGetProperty("assetBaseId", out var b)) baseId = b.GetString() ?? "";
-            int cachedInstDef = LookupCachedInstDef(global::Rhino.RhinoDoc.ActiveDoc, CacheKeyForBaseId(baseId));
+            // Only consult the block cache in instances mode — in copies mode
+            // we never blockify, so a cache hit would place a stale block from
+            // a previous instances-mode session instead of a fresh copy.
+            int cachedInstDef = _useInstances.Checked == true
+                ? LookupCachedInstDef(global::Rhino.RhinoDoc.ActiveDoc, CacheKeyForBaseId(baseId))
+                : -1;
             if (cachedInstDef >= 0)
             {
                 BkLog.W($"OnDragStart: cached InstDef #{cachedInstDef} for {CacheKeyForBaseId(baseId)} — skipping download + import");
@@ -3339,54 +3477,21 @@ namespace Blendkit.Rhino
                     StartMaterialConvert(cachedBlend, matDrop);
                     return;
                 }
-                SetStatus("Converting cached .blend → .glb for drop…");
-                Task.Run(async () =>
-                {
-                    try
-                    {
-                        var taskId = await BlenderConvertService.StartAsync(
-                            cachedBlend, Process.GetCurrentProcess().Id);
-                        if (string.IsNullOrEmpty(taskId))
-                        {
-                            SetStatus("Convert request returned no task_id.");
-                            return;
-                        }
-                        RhinoApp.InvokeOnUiThread((Action)(() =>
-                        {
-                            Action<string> action =
-                                glb => StartDrag(glb, alreadyDownloaded: true);
-                            // The Go client's cache fast-path can emit
-                            // "finished" before this registration runs; if it
-                            // already did, HandleConvertTask parked the result
-                            // in _orphanedConvertResults. Drain it here instead
-                            // of registering an action that will never fire —
-                            // otherwise the drag never starts and (for the
-                            // ImportForDrop variants) the entry sticks in the
-                            // downloads list at "Converted — drop to place".
-                            if (_orphanedConvertResults.TryGetValue(taskId, out var orphanGlb))
-                            {
-                                _orphanedConvertResults.Remove(taskId);
-                                action(orphanGlb);
-                            }
-                            else
-                            {
-                                _pendingConvertActions[taskId] = action;
-                            }
-                        }));
-                    }
-                    catch (Exception ex) { SetStatus("Convert request failed: " + ex.Message); }
-                });
+                // Blender-parity: a .blend is cached but no .glb yet. Start a
+                // drag whose preview cube just follows the cursor; the convert
+                // fires on drop (deferredConvertBlend), and the result imports
+                // at the captured point. Nothing runs mid-drag.
+                StartDrag(glbPath: null, alreadyDownloaded: true,
+                    deferredConvertBlend: cachedBlend);
                 return;
             }
 
-            // Cold case: nothing cached. Start a drag session that captures
-            // the release point while the download runs in the background;
-            // place the asset at the captured point once it lands.
-            var drop = StartDrag(glbPath: null, alreadyDownloaded: false);
-            // Bind: when the download for this drop finishes, run import via
-            // the drop's saved point + normal. StartDownloadForDrop does the
-            // task_id wiring.
-            _ = StartDownloadForDrop(hit, drop);
+            // Cold case: nothing cached. Start a drag session whose preview
+            // cube just follows the cursor — NOTHING downloads yet. On drop,
+            // the download starts (deferredDownloadHit), then convert (if the
+            // file is a .blend) and import, all at the captured point. This is
+            // the Blender-add-on model: no work under the moving cursor.
+            StartDrag(glbPath: null, alreadyDownloaded: true, deferredDownloadHit: hit);
         }
 
         /// <summary>
@@ -3524,7 +3629,14 @@ namespace Blendkit.Rhino
         /// cube, so multiple drags can coexist with their own progress bars
         /// in the viewport.
         /// </summary>
-        private ActiveDrop StartDrag(string glbPath, bool alreadyDownloaded, int cachedInstanceDef = -1)
+        // deferredDownloadHit / deferredConvertBlend: work to kick off ONLY
+        // once the drop lands (mouse released over a viewport). This is the
+        // Blender-add-on model — nothing downloads/converts/imports while the
+        // user is still dragging, so the viewport stays calm under the cursor
+        // and _-Import never runs mid-drag. Whichever is set drives the
+        // post-drop pipeline: download → (convert if .blend) → import at point.
+        private ActiveDrop StartDrag(string glbPath, bool alreadyDownloaded, int cachedInstanceDef = -1,
+            JsonElement? deferredDownloadHit = null, string deferredConvertBlend = null)
         {
             var drop = new ActiveDrop();
             drop.Status = alreadyDownloaded ? "Cached — drop to place" : "Downloading…";
@@ -3545,6 +3657,10 @@ namespace Blendkit.Rhino
                 _grid_static_currentHit = hit; // for the metadata stamper
                 _grid_static_currentAssetBaseId = drop.AssetBaseId;
             }
+            // Capture the texture cap now, on the UI thread — the convert
+            // dispatch (ConvertForDrop) runs on the poller thread and can't
+            // read the _resolution control.
+            drop.TextureCap = TextureCapPx(drop.AssetType);
             // Pick a preview style appropriate to the asset type.
             //   MODEL/PRINTABLE → bbox cube (matches placement intent).
             //   MATERIAL → flat disc on the surface (= "I'll paint this
@@ -3581,6 +3697,32 @@ namespace Blendkit.Rhino
                 else if (glbPath != null)
                 {
                     ImportForDrop(drop, glbPath);
+                }
+                else if (deferredConvertBlend != null)
+                {
+                    // Blender-parity: start the .blend → .glb convert NOW, on
+                    // drop. Placement happens at the captured point when it
+                    // finishes (PlaceOrDeferDrop → ImportForDrop).
+                    drop.Status = "Converting…";
+                    drop.WorkStartTick = Environment.TickCount;
+                    drop.Preview.ShowCancel = true; RefreshCancelWatcher();
+                    EnsureReaperRunning();
+                    ConvertForDrop(deferredConvertBlend, drop);
+                }
+                else if (deferredDownloadHit.HasValue)
+                {
+                    // Blender-parity: start the download NOW, on drop.
+                    drop.Status = "Downloading…";
+                    drop.WorkStartTick = Environment.TickCount;
+                    drop.Preview.ShowCancel = true; RefreshCancelWatcher();
+                    EnsureReaperRunning();
+                    _ = StartDownloadForDrop(deferredDownloadHit.Value, drop);
+                }
+                else if (drop.ReadyFilePath != null)
+                {
+                    // Safety net: a file became ready before the drop (e.g. a
+                    // cached-glb path). Import it now that the point is set.
+                    ImportForDrop(drop, drop.ReadyFilePath);
                 }
                 else
                 {
@@ -3635,6 +3777,38 @@ namespace Blendkit.Rhino
             // "0.5K" maps to "resolution_0_5K".
             var sel = _resolution.SelectedValue?.ToString() ?? "2K";
             return "resolution_" + sel.Replace("0.5K", "0_5K");
+        }
+
+        /// <summary>
+        /// Pixel cap for the .blend → .glb texture downscale, mirroring the
+        /// current download-resolution choice. This is the safety net for
+        /// assets that ship an un-downscaled 8K original (no server-side
+        /// resolution variant): even then the exported GLB is bounded, so
+        /// Rhino's synchronous glTF import doesn't freeze for minutes on a
+        /// quarter-gigabyte texture. Returns 0 (no cap) for ORIGINAL.
+        ///
+        /// Must be called on the UI thread (reads the _resolution control);
+        /// convert call sites capture the value before their background POST.
+        /// </summary>
+        private int TextureCapPx(string assetType = null)
+        {
+            // Honor the same Strip-Materials lowest-variant override that
+            // ResolveDownloadResolution applies, so the cap tracks the
+            // resolution we actually downloaded.
+            var t = (assetType ?? "model").ToLowerInvariant();
+            bool stripApplies = t == "model" || t == "printable";
+            if (stripApplies && _stripMaterials.Checked == true) return 512; // 0.5K
+            var sel = _resolution.SelectedValue?.ToString() ?? "1K";
+            switch (sel)
+            {
+                case "0.5K":     return 512;
+                case "1K":       return 1024;
+                case "2K":       return 2048;
+                case "4K":       return 4096;
+                case "8K":       return 8192;
+                case "ORIGINAL": return 0;   // no cap — user explicitly wants full res
+                default:         return 1024;
+            }
         }
 
         /// <summary>
@@ -3978,6 +4152,38 @@ namespace Blendkit.Rhino
             ClearDropPreview(drop);
             _drops.Remove(drop);
             RefreshDownloadsButton();
+            RefreshCancelWatcher();
+        }
+
+        /// <summary>
+        /// Called when a download/convert produces a placeable file for a
+        /// drag-drop. Places it immediately if the drop already landed (or it's
+        /// an HDR, which needs no point); otherwise the download finished while
+        /// the user is still dragging, so we STASH the file on the drop and let
+        /// <see cref="DragSession.OnDrop"/> import it once the mouse is
+        /// released. Importing mid-drag (mouse still captured) makes _-Import
+        /// return false — this is the fix for "imports fail quite often".
+        /// </summary>
+        private void PlaceOrDeferDrop(ActiveDrop drop, string filePath)
+        {
+            if (drop == null) return;
+            // HDR/EXR = a doc-wide environment binding; no drop point involved.
+            if (DownloadService.IsHdrImage(filePath) || drop.DropPoint.HasValue)
+            {
+                ImportForDrop(drop, filePath);
+                return;
+            }
+            // Still dragging: hold the file until the drop lands.
+            drop.ReadyFilePath = filePath;
+            drop.Status = "Ready — drop to place";
+            if (drop.Preview != null && drop.Preview.Enabled)
+            {
+                drop.Preview.Progress = 1.0;
+                drop.Preview.Label = "Drop to place";
+                try { foreach (var v in global::Rhino.RhinoDoc.ActiveDoc.Views) v.Redraw(); } catch { }
+            }
+            SetStatus($"'{drop.AssetName}' ready — drop in a viewport to place.");
+            RefreshDownloadsButton();
         }
 
         /// <summary>
@@ -4053,13 +4259,37 @@ namespace Blendkit.Rhino
         /// and a final rotation of <paramref name="spinRadians"/> is applied
         /// about that normal (the user's mousewheel rotation during drag).
         /// </summary>
-        private void ImportAtPoint(string path, global::Rhino.Geometry.Point3d pt, global::Rhino.Geometry.Vector3d normal, double spinRadians)
+        /// <summary>
+        /// Run <paramref name="action"/> exactly once on the next RhinoApp.Idle
+        /// tick — i.e. when Rhino is between events and ready to accept a
+        /// command. `_-Import` (RhinoApp.RunScript) intermittently returns
+        /// false when invoked synchronously inside our drag mouse-up handling
+        /// (the app isn't in a command-ready state yet); deferring to Idle runs
+        /// it from the same clean context that makes it succeed every time from
+        /// the MCP console. Safe to call from any thread — the subscription is
+        /// marshalled to the UI thread and Idle fires there.
+        /// </summary>
+        private static void RunWhenIdle(Action action)
         {
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
-                // RunImportSerialized guards against message-pump
-                // re-entrancy interleaving two drops — see the long
-                // comment above _importInProgress.
+                EventHandler handler = null;
+                handler = (s, e) =>
+                {
+                    RhinoApp.Idle -= handler;
+                    try { action(); } catch { }
+                };
+                RhinoApp.Idle += handler;
+            }));
+        }
+
+        private void ImportAtPoint(string path, global::Rhino.Geometry.Point3d pt, global::Rhino.Geometry.Vector3d normal, double spinRadians)
+        {
+            // Defer to the next Idle so _-Import runs command-ready (see
+            // RunWhenIdle) instead of inside the drag mouse-up, which makes it
+            // return false. RunImportSerialized still guards re-entrancy.
+            RunWhenIdle(() =>
+            {
                 RunImportSerialized(() =>
                 {
                     try
@@ -4070,12 +4300,12 @@ namespace Blendkit.Rhino
                     }
                     catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
                 });
-            }));
+            });
         }
 
         private void ImportAtPointCore(global::Rhino.RhinoDoc doc, string path,
             global::Rhino.Geometry.Point3d pt, global::Rhino.Geometry.Vector3d normal,
-            double spinRadians)
+            double spinRadians, int attempt = 0)
         {
             // Placement transform — orient Z-axis to the surface normal,
             // spin around it for the user's mousewheel rotation, then
@@ -4116,7 +4346,28 @@ namespace Blendkit.Rhino
             BkLog.W($"import-timing: _-Import returned {(newIds?.Count ?? -1)} objects in {t0.ElapsedMilliseconds} ms");
             if (newIds == null)
             {
-                SetStatus("Import command returned false.");
+                // _-Import returned false — almost always because Rhino wasn't
+                // command-ready at this instant (transient, clears within a
+                // frame or two). Retry on a later Idle before giving up. This
+                // is the fix for cachedGlb drops that import right after the
+                // mouse-up and intermittently fail.
+                const int maxAttempts = 4;
+                if (attempt + 1 < maxAttempts)
+                {
+                    BkLog.W($"_-Import returned false (attempt {attempt + 1}/{maxAttempts}) — retrying on next idle");
+                    RunWhenIdle(() => RunImportSerialized(() =>
+                    {
+                        try
+                        {
+                            var d2 = global::Rhino.RhinoDoc.ActiveDoc;
+                            WithUndo(d2, "Blendkit: Drop asset at point",
+                                () => ImportAtPointCore(d2, path, pt, normal, spinRadians, attempt + 1));
+                        }
+                        catch (Exception ex) { SetStatus("Import error: " + ex.Message); }
+                    }));
+                    return;
+                }
+                SetStatus("Import command returned false after retries.");
                 return;
             }
             if (newIds.Count == 0)
@@ -4133,34 +4384,62 @@ namespace Blendkit.Rhino
             t1.Stop();
             BkLog.W($"import-timing: ApplyImportPostProcess: {t1.ElapsedMilliseconds} ms");
 
-            // Build a Rhino Group around the imported objects (applying
-            // the placement xform to each member as a side effect of
-            // Objects.Transform inside GroupImported). Each member keeps
-            // its own material, so re-assigning materials post-import
-            // works the same as with any other Rhino object — which is
-            // what the experts asked for.
+            // Place via the model chosen by the "Place as instances" toggle
+            // (shared block vs independent group copy). See PlaceImported.
             var t2 = System.Diagnostics.Stopwatch.StartNew();
-            int gIdx = GroupImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
+            var liveIds = PlaceImported(doc, newIds, assetBaseId, assetName, xform);
             t2.Stop();
-            BkLog.W($"import-timing: GroupImported: {t2.ElapsedMilliseconds} ms");
+            BkLog.W($"import-timing: PlaceImported ({liveIds.Count} live): {t2.ElapsedMilliseconds} ms");
+            var t3 = System.Diagnostics.Stopwatch.StartNew();
+            StampBlendkitMetadata(doc, liveIds, path, xform);
+            t3.Stop();
+            BkLog.W($"import-timing: StampMetadata + auto-proxy ({liveIds.Count} objects): {t3.ElapsedMilliseconds} ms");
+            doc.Views.Redraw();
+            // Preview-cube cleanup is handled by ImportForDrop, which
+            // wraps this method for drag flows. Click-import callers
+            // never had a preview cube to begin with.
+            SetStatus($"Dropped at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}");
+        }
 
-            // Suppress wireframe per-member. After the in-place
-            // transform inside GroupImported the original IDs may be
-            // stale (Transform with delete-original returns new Guids);
-            // enumerate via doc.Groups.GroupMembers when we successfully
-            // grouped, otherwise fall back to FindId on the original
-            // newIds (still valid when xform was identity).
+        /// <summary>
+        /// Place freshly-imported objects into the doc using the model chosen
+        /// by the "Place as instances" toggle: a shared InstanceDefinition
+        /// (blocks — default) or an independent Rhino Group (copies). Returns
+        /// the live doc ids to post-process (metadata stamp, wireframe
+        /// suppression, proxy). Instance mode also caches the InstDef by
+        /// asset-base-id so later drops can reuse it via the OnDragStart fast
+        /// path. Must run on the UI thread (reads the _useInstances control).
+        /// </summary>
+        private System.Collections.Generic.List<Guid> PlaceImported(
+            global::Rhino.RhinoDoc doc,
+            System.Collections.Generic.IList<Guid> newIds,
+            string assetBaseId, string assetName,
+            global::Rhino.Geometry.Transform xform)
+        {
             var liveIds = new System.Collections.Generic.List<Guid>();
+            if (_useInstances.Checked == true)
+            {
+                int defIdx = BlockifyImported(doc, newIds, assetBaseId, assetName,
+                    xform, out var instId, NameSuffixForVariant());
+                if (defIdx >= 0 && instId != Guid.Empty)
+                {
+                    StoreCachedInstDef(doc, CacheKeyForBaseId(assetBaseId), defIdx);
+                    var io = doc.Objects.FindId(instId);
+                    if (io != null) { liveIds.Add(instId); SuppressWireframe(io); }
+                    return liveIds;
+                }
+                // Blockify failed (degenerate geometry etc.) — fall through to
+                // the group path so the drop still lands.
+                BkLog.W("PlaceImported: BlockifyImported failed; falling back to group copy");
+            }
+
+            int gIdx = GroupImported(doc, newIds, assetBaseId, assetName, xform, NameSuffixForVariant());
             if (gIdx >= 0)
             {
                 var members = doc.Groups.GroupMembers(gIdx);
                 if (members != null)
                 {
-                    foreach (var m in members)
-                    {
-                        liveIds.Add(m.Id);
-                        SuppressWireframe(m);
-                    }
+                    foreach (var m in members) { liveIds.Add(m.Id); SuppressWireframe(m); }
                 }
             }
             else
@@ -4171,15 +4450,7 @@ namespace Blendkit.Rhino
                     if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
                 }
             }
-            var t3 = System.Diagnostics.Stopwatch.StartNew();
-            StampBlendkitMetadata(doc, liveIds, path, xform);
-            t3.Stop();
-            BkLog.W($"import-timing: StampMetadata + auto-proxy ({liveIds.Count} objects): {t3.ElapsedMilliseconds} ms");
-            doc.Views.Redraw();
-            // Preview-cube cleanup is handled by ImportForDrop, which
-            // wraps this method for drag flows. Click-import callers
-            // never had a preview cube to begin with.
-            SetStatus($"Dropped at ({pt.X:F2}, {pt.Y:F2}, {pt.Z:F2}): {System.IO.Path.GetFileName(path)}");
+            return liveIds;
         }
 
         // ===== Serialized-import machinery ======================================
@@ -4363,6 +4634,10 @@ namespace Blendkit.Rhino
         // StartDrag so the import path (which runs across closures and
         // task callbacks) can key its cache without re-reading the hit.
         private static string _grid_static_currentAssetBaseId;
+        // Texture downscale cap (px) captured at click-download start for the
+        // ConvertAndImport path (which dispatches from the poller thread and
+        // can't read the _resolution control). 0 = no cap.
+        private static int _grid_static_currentTextureCap;
 
         /// <summary>
         /// Run <paramref name="action"/> inside a single Rhino undo
@@ -4393,12 +4668,10 @@ namespace Blendkit.Rhino
 
         private static int LookupCachedInstDef(global::Rhino.RhinoDoc doc, string cacheKey)
         {
-            // Cache disabled: we no longer blockify imports (see the
-            // comment block above _instDefCache). Returning -1 here makes
-            // every existing call site short-circuit cleanly to the
-            // import-and-group path without touching the call sites.
-            return -1;
-#pragma warning disable CS0162  // unreachable code; kept for easy revert
+            // Re-enabled for the instances (blocks) mode. Callers gate on the
+            // "Place as instances" toggle before consulting the cache, so in
+            // copies mode this is never reached and every drop still falls
+            // through to the import-and-group path. Returns -1 on miss.
             if (doc == null || string.IsNullOrEmpty(cacheKey)) return -1;
             if (_instDefCache.TryGetValue(doc.RuntimeSerialNumber, out var bag)
                 && bag.TryGetValue(cacheKey, out var idx))
@@ -4427,7 +4700,6 @@ namespace Blendkit.Rhino
                 return byName.Index;
             }
             return -1;
-#pragma warning restore CS0162
         }
 
         private static void StoreCachedInstDef(global::Rhino.RhinoDoc doc, string assetBaseId, int idx)
@@ -4468,8 +4740,10 @@ namespace Blendkit.Rhino
             string assetBaseId,
             string assetName,
             global::Rhino.Geometry.Transform xform,
+            out Guid instanceId,
             string variantSuffix = "")
         {
+            instanceId = Guid.Empty;
             if (doc == null || ids == null || ids.Count == 0) return -1;
             // InstanceDefinitions need a unique name — disambiguate by
             // suffixing if a previous run (or the user) created one with
@@ -4515,6 +4789,7 @@ namespace Blendkit.Rhino
                     BkLog.W("BlockifyImported: AddInstanceObject returned Guid.Empty");
                     return -1;
                 }
+                instanceId = iid;
                 return defIdx;
             }
             catch (Exception ex)
@@ -4727,29 +5002,7 @@ namespace Blendkit.Rhino
                     var xform = global::Rhino.Geometry.Transform.Translation(
                         pt - global::Rhino.Geometry.Point3d.Origin);
 
-                    int gIdx = GroupImported(doc, added, assetBaseIdFast, assetName, xform, NameSuffixForVariant());
-
-                    var liveIds = new List<Guid>();
-                    if (gIdx >= 0)
-                    {
-                        var members = doc.Groups.GroupMembers(gIdx);
-                        if (members != null)
-                        {
-                            foreach (var m in members)
-                            {
-                                liveIds.Add(m.Id);
-                                SuppressWireframe(m);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        foreach (var id in added)
-                        {
-                            var ro = doc.Objects.FindId(id);
-                            if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
-                        }
-                    }
+                    var liveIds = PlaceImported(doc, added, assetBaseIdFast, assetName, xform);
                     StampBlendkitMetadata(doc, liveIds, path, xform);
                     doc.Views.Redraw();
                     SetStatus(res == global::Rhino.Input.GetResult.Point
@@ -4890,6 +5143,9 @@ namespace Blendkit.Rhino
             _grid_static_currentHit = hit;
             _grid_static_currentAssetBaseId = hit.TryGetProperty("assetBaseId", out var ab)
                 ? (ab.GetString() ?? "") : "";
+            // Capture the texture cap on the UI thread for the click-download
+            // convert path (ConvertAndImport runs on the poller thread).
+            _grid_static_currentTextureCap = TextureCapPx(assetType);
             SetStatus($"Starting download: {name} @ {sel}…");
             try
             {
@@ -5324,7 +5580,9 @@ namespace Blendkit.Rhino
                     if (string.IsNullOrEmpty(filePath)) continue;
                     if (DownloadService.IsRhinoImportable(filePath))
                     {
-                        if (drop != null) ImportForDrop(drop, filePath);
+                        // PlaceOrDeferDrop, not ImportForDrop: the download can
+                        // finish mid-drag now, before the drop point exists.
+                        if (drop != null) PlaceOrDeferDrop(drop, filePath);
                         else ImportFile(filePath);
                     }
                     else if (DownloadService.IsBlend(filePath))
@@ -5402,7 +5660,8 @@ namespace Blendkit.Rhino
                 try
                 {
                     var taskId = await BlenderConvertService.StartAsync(
-                        blendPath, Process.GetCurrentProcess().Id);
+                        blendPath, Process.GetCurrentProcess().Id,
+                        textureMaxPx: drop.TextureCap);
                     if (string.IsNullOrEmpty(taskId))
                     {
                         SetStatus("Convert request returned no task_id.");
@@ -5411,7 +5670,8 @@ namespace Blendkit.Rhino
                     RhinoApp.InvokeOnUiThread((Action)(() =>
                     {
                         drop.ConvertTaskId = taskId;
-                        Action<string> action = glb => ImportForDrop(drop, glb);
+                        // PlaceOrDeferDrop: the convert can finish mid-drag.
+                        Action<string> action = glb => PlaceOrDeferDrop(drop, glb);
                         // Did the cache fast-path beat us? If so, fire now.
                         if (_orphanedConvertResults.TryGetValue(taskId, out var orphanGlb))
                         {
@@ -5480,42 +5740,12 @@ namespace Blendkit.Rhino
                         return;
                     }
 
-                    // Strip materials / decimate before grouping.
+                    // Strip materials / decimate before placement.
                     ApplyImportPostProcess(doc, newIds);
-                    int gIdx = GroupImported(doc, newIds, assetBaseIdFast, assetName,
-                        global::Rhino.Geometry.Transform.Identity, NameSuffixForVariant());
-
-                    // Suppress wireframe on each member and stamp
-                    // metadata. We have to re-resolve the IDs because
-                    // GroupImported may have transformed them in place
-                    // (Transform(id, _, true) → new Guid). For the
-                    // identity-transform path above the IDs are stable.
-                    // Use the doc.Groups to enumerate live members so
-                    // we don't track the new Guids ourselves.
-                    var liveIds = new System.Collections.Generic.List<Guid>();
-                    if (gIdx >= 0)
-                    {
-                        var members = doc.Groups.GroupMembers(gIdx);
-                        if (members != null)
-                        {
-                            foreach (var m in members)
-                            {
-                                liveIds.Add(m.Id);
-                                SuppressWireframe(m);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // GroupImported failed (e.g. empty assetName +
-                        // empty assetBaseId, or doc.Groups.Add returned
-                        // -1). Stamp + suppress the raw imported IDs.
-                        foreach (var id in newIds)
-                        {
-                            var ro = doc.Objects.FindId(id);
-                            if (ro != null) { liveIds.Add(id); SuppressWireframe(ro); }
-                        }
-                    }
+                    // Place as a shared block (instances mode) or a group copy,
+                    // per the toggle. See PlaceImported.
+                    var liveIds = PlaceImported(doc, newIds, assetBaseIdFast, assetName,
+                        global::Rhino.Geometry.Transform.Identity);
                     StampBlendkitMetadata(doc, liveIds, path, global::Rhino.Geometry.Transform.Identity);
                     doc.Views.Redraw();
                     SetStatus($"Imported {System.IO.Path.GetFileName(path)}.");
@@ -5549,7 +5779,8 @@ namespace Blendkit.Rhino
                 try
                 {
                     var taskId = await BlenderConvertService.StartAsync(
-                        blendPath, Process.GetCurrentProcess().Id);
+                        blendPath, Process.GetCurrentProcess().Id,
+                        textureMaxPx: _grid_static_currentTextureCap);
                     if (string.IsNullOrEmpty(taskId))
                     {
                         SetStatus("Convert request returned no task_id.");

@@ -14,7 +14,24 @@ namespace Blendkit.Rhino.Infra
     /// </summary>
     public static class BlenderConvertService
     {
-        public static async Task<string> StartAsync(string blendPath, int appId)
+        /// <param name="textureMaxPx">
+        /// Downscale every embedded texture whose longest side exceeds this
+        /// to fit (0 = no cap). Mirrors the download-resolution setting so
+        /// assets that ship an un-downscaled 8K original still produce a
+        /// bounded GLB. This is the single biggest lever on GLB size / Rhino
+        /// import time — see the recipe header in tools/export_glb.py.
+        /// </param>
+        /// <param name="imageFormat">
+        /// "AUTO" / "JPEG" / "PNG" / "WEBP". Default AUTO (PNG/JPEG per source).
+        /// DO NOT use WEBP for the Rhino host: Rhino's `_-Import` command (the
+        /// only glTF import path we have — RhinoDoc.Import returns false for
+        /// glTF) FAILS on WEBP-textured GLBs and can crash Rhino. The bridge
+        /// importer decodes WEBP, but the plug-in uses `_-Import`. AUTO keeps
+        /// files small enough (the texture downscale is the real size lever)
+        /// while staying import-safe.
+        /// </param>
+        public static async Task<string> StartAsync(string blendPath, int appId,
+            int textureMaxPx = 0, string imageFormat = "AUTO", int imageQuality = 90)
         {
             var glbPath = Path.ChangeExtension(blendPath, ".glb");
             var blenderExe = BlenderService.FindBlenderExe();
@@ -27,10 +44,13 @@ namespace Blendkit.Rhino.Infra
                 status_message   = "Converting…",
                 @params = new
                 {
-                    output_path  = glbPath,
-                    yup          = true,
-                    draco        = false,
-                    export_apply = true,
+                    output_path    = glbPath,
+                    yup            = true,
+                    draco          = false,
+                    export_apply   = true,
+                    texture_max_px = textureMaxPx,
+                    image_format   = imageFormat ?? "AUTO",
+                    image_quality  = imageQuality,
                 },
                 app_id           = appId,
                 addon_version    = SearchService.AddonVersion,

@@ -404,17 +404,23 @@ namespace Blendkit.Rhino
             };
 
             string ext = (os == "windows") ? ".exe" : "";
-            yield return $"blenderkit-client-{os}-{arch}{ext}";
-
-            // Cross-arch fallback: a Rosetta-running Intel Rhino on Apple
-            // Silicon, or vice versa. Cheap to probe, big "it actually
-            // works" win when the user installed the wrong-arch yak.
             string altArch = arch == "x86_64" ? "arm64" : "x86_64";
+
+            // Unified name from the standalone bk_client repo's build
+            // (dev.py BUILD_MATRIX → `bk_client-{os}-{arch}`). This is the
+            // current convention; probe it first. Cross-arch second (a
+            // Rosetta-running Intel Rhino on Apple Silicon, or vice versa).
+            yield return $"bk_client-{os}-{arch}{ext}";
+            yield return $"bk_client-{os}-{altArch}{ext}";
+
+            // Legacy descriptive name from the pre-split client (shipped
+            // inside the Blender add-on repo). Kept so older yaks still work.
+            yield return $"blenderkit-client-{os}-{arch}{ext}";
             yield return $"blenderkit-client-{os}-{altArch}{ext}";
 
             // Pre-rename short names — kept for the 0.1.2 yak (and any
             // local dev workflow that still produces `client.exe` from a
-            // plain `go build` rather than the addon's dev.py).
+            // plain `go build` rather than dev.py).
             yield return os == "windows" ? "client.exe" : "client";
         }
     }

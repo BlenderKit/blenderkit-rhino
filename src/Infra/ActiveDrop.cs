@@ -36,10 +36,30 @@ namespace Blendkit.Rhino.Infra
         // of the same asset_base_id can skip both the download and the
         // geometry-duplication on import.
         public string AssetBaseId = "";
+        // Texture downscale cap (px) for the .blend → .glb convert, captured
+        // on the UI thread at drag start (mirrors the resolution setting).
+        // The convert dispatch runs on the /report poller thread, which must
+        // not read UI controls — so we stash the value here. 0 = no cap.
+        public int TextureCap;
+        // Environment.TickCount when the post-drop work (download/convert)
+        // began. 0 until then. The panel's reaper timer clears a drop whose
+        // work has been in flight far too long (hung client/convert) so it
+        // doesn't sit in the downloads list forever.
+        public int WorkStartTick;
         // Task ids for the download and the .blend → .glb convert step. Either
         // can be null until the corresponding step has been dispatched.
         public string DownloadTaskId;
         public string ConvertTaskId;
+        // Set when the download/convert produced a placeable file (.glb) but
+        // the user hadn't released the mouse yet (drop point not captured).
+        // The download+convert is now fast enough to finish mid-drag, so we
+        // must NOT import until the drop lands — a bare _-Import fired while
+        // the mouse is still captured mid-drag returns false ("Import command
+        // returned false"). Instead we stash the ready file here and let
+        // OnDrop trigger the placement. Whichever of {file ready, drop landed}
+        // happens second does the actual import. Mirrors the Blender add-on,
+        // which only starts placement after the drop completes.
+        public string ReadyFilePath;
         // Once the imported geometry lands we set this so progress callbacks
         // ignore the entry.
         public bool Done;
