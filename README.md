@@ -58,6 +58,11 @@ final result:
   refine. It's faster on subsequent runs.
 - Assets are converted to `.glb` on your machine the first time you use them, so
   the occasional `.blend` that doesn't convert cleanly may import incompletely.
+- **Download / convert can stall.** The download → Blender-convert → import
+  pipeline is still flaky: a job sometimes sits in "Converting…" (or another
+  intermediate state) and doesn't finish. A cold Blender launch per convert is
+  slow, and there is no timeout/retry yet. If a job hangs, cancel it from the
+  Downloads popup and retry; the asset usually converts on a second attempt.
 
 Found a bug? Please report it at
 <https://github.com/BlenderKit/blendkit-rhino/issues> — it's an alpha and
