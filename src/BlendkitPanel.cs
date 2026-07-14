@@ -1469,6 +1469,25 @@ namespace Blendkit.Rhino
         }
 
         /// <summary>
+        /// Tear down a drop's preview conduit AND force the viewports to
+        /// repaint. Setting <c>Enabled = false</c> alone only unsubscribes
+        /// the conduit from FUTURE draws — the frame already on screen keeps
+        /// showing the green placeholder box until something else triggers a
+        /// repaint. That's why boxes lingered after a finished or cancelled
+        /// download until the user nudged the view. The Redraw() (marshalled
+        /// to the UI thread, since completion callbacks arrive on the /report
+        /// poller thread) guarantees the box actually disappears now.
+        /// </summary>
+        private static void ClearDropPreview(ActiveDrop drop)
+        {
+            try { if (drop?.Preview != null) drop.Preview.Enabled = false; } catch { }
+            RhinoApp.InvokeOnUiThread((Action)(() =>
+            {
+                try { global::Rhino.RhinoDoc.ActiveDoc?.Views.Redraw(); } catch { }
+            }));
+        }
+
+        /// <summary>
         /// Cancel an in-flight drop: hide the preview cube, remove the
         /// drop from <see cref="_drops"/>, and refresh the downloads
         /// button. The Go-client task is left to finish on its own —
@@ -1478,7 +1497,8 @@ namespace Blendkit.Rhino
         private void CancelDrop(ActiveDrop drop)
         {
             if (drop == null) return;
-            try { drop.Done = true; drop.Preview.Enabled = false; } catch { }
+            drop.Done = true;
+            ClearDropPreview(drop);
             _drops.Remove(drop);
             // Also drop any pending convert / material-extract action
             // bound to this drop's task ids so the orphan-result handlers
@@ -3333,8 +3353,25 @@ namespace Blendkit.Rhino
                         }
                         RhinoApp.InvokeOnUiThread((Action)(() =>
                         {
-                            _pendingConvertActions[taskId] =
+                            Action<string> action =
                                 glb => StartDrag(glb, alreadyDownloaded: true);
+                            // The Go client's cache fast-path can emit
+                            // "finished" before this registration runs; if it
+                            // already did, HandleConvertTask parked the result
+                            // in _orphanedConvertResults. Drain it here instead
+                            // of registering an action that will never fire —
+                            // otherwise the drag never starts and (for the
+                            // ImportForDrop variants) the entry sticks in the
+                            // downloads list at "Converted — drop to place".
+                            if (_orphanedConvertResults.TryGetValue(taskId, out var orphanGlb))
+                            {
+                                _orphanedConvertResults.Remove(taskId);
+                                action(orphanGlb);
+                            }
+                            else
+                            {
+                                _pendingConvertActions[taskId] = action;
+                            }
                         }));
                     }
                     catch (Exception ex) { SetStatus("Convert request failed: " + ex.Message); }
@@ -3552,7 +3589,7 @@ namespace Blendkit.Rhino
             };
             session.OnCancel = () =>
             {
-                drop.Preview.Enabled = false;
+                ClearDropPreview(drop);
                 _drops.Remove(drop);
                 SetStatus(alreadyDownloaded
                     ? "Drop cancelled — released outside any viewport."
@@ -3913,7 +3950,7 @@ namespace Blendkit.Rhino
             }
             catch (Exception ex)
             {
-                drop.Preview.Enabled = false;
+                ClearDropPreview(drop);
                 _drops.Remove(drop);
                 SetStatus("Download error: " + ex.Message);
             }
@@ -3935,7 +3972,10 @@ namespace Blendkit.Rhino
             else
                 ImportAtPickedPoint(filePath);
             drop.Done = true;
-            drop.Preview.Enabled = false;
+            // ImportAtPoint queues its own redraw, but the HDR / picked-point
+            // branches don't, and the queued one can race the box teardown —
+            // so clear + redraw explicitly here too (idempotent).
+            ClearDropPreview(drop);
             _drops.Remove(drop);
             RefreshDownloadsButton();
         }
@@ -3995,7 +4035,7 @@ namespace Blendkit.Rhino
                 finally
                 {
                     drop.Done = true;
-                    drop.Preview.Enabled = false;
+                    ClearDropPreview(drop);
                     _drops.Remove(drop);
                 }
             }));
@@ -4969,7 +5009,7 @@ namespace Blendkit.Rhino
                 var drop = _drops.Find(d => d.ConvertTaskId == taskId);
                 if (drop != null)
                 {
-                    drop.Preview.Enabled = false;
+                    ClearDropPreview(drop);
                     _drops.Remove(drop);
                 }
                 var msg = task.TryGetProperty("message", out var m) ? m.GetString() : "";
@@ -5320,7 +5360,7 @@ namespace Blendkit.Rhino
             {
                 if (drop != null)
                 {
-                    drop.Preview.Enabled = false;
+                    ClearDropPreview(drop);
                     _drops.Remove(drop);
                 }
                 if (msg != null && msg.Contains("401"))
@@ -5350,7 +5390,7 @@ namespace Blendkit.Rhino
         {
             if (BlenderService.FindBlenderExe() == null)
             {
-                drop.Preview.Enabled = false;
+                ClearDropPreview(drop);
                 _drops.Remove(drop);
                 SetStatus("Blender not found — install Blender from blender.org so .blend assets can be converted.");
                 Process.Start(new ProcessStartInfo("https://www.blender.org/download/") { UseShellExecute = true });
@@ -5658,7 +5698,7 @@ namespace Blendkit.Rhino
         {
             if (BlenderService.FindBlenderExe() == null)
             {
-                if (drop != null) { drop.Preview.Enabled = false; _drops.Remove(drop); }
+                if (drop != null) { ClearDropPreview(drop); _drops.Remove(drop); }
                 SetStatus("Blender not found — install Blender to extract material info.");
                 Process.Start(new ProcessStartInfo("https://www.blender.org/download/")
                     { UseShellExecute = true });
@@ -5868,7 +5908,7 @@ namespace Blendkit.Rhino
                     }
                     if (drop != null)
                     {
-                        drop.Preview.Enabled = false;
+                        ClearDropPreview(drop);
                         _drops.Remove(drop);
                     }
                 }));
@@ -5876,7 +5916,7 @@ namespace Blendkit.Rhino
             else if (status == "error")
             {
                 _pendingMaterialDrops.TryRemove(taskId, out var drop);
-                if (drop != null) { drop.Preview.Enabled = false; _drops.Remove(drop); }
+                if (drop != null) { ClearDropPreview(drop); _drops.Remove(drop); }
                 var msg = task.TryGetProperty("message", out var m) ? m.GetString() : "";
                 SetStatus("Material extract failed: " + msg);
             }
