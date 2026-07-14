@@ -5166,6 +5166,16 @@ namespace Blendkit.Rhino
             var taskId = task.TryGetProperty("task_id", out var id) ? (id.GetString() ?? "") : "";
             var idShort = taskId.Length > 8 ? taskId.Substring(0, 8) : taskId;
 
+            // The bk_client broadcasts high-frequency housekeeping tasks
+            // ("settings", "client_status") on every /report cycle — observed
+            // at 6-8/s, ~92% of all task events. We have no handler for them,
+            // so processing each one (RefreshDownloadsButton + UpdateDropStatus
+            // + a log write) is pure overhead that starves the poller and can
+            // delay real asset_download "finished" events — the observed cause
+            // of downloads sticking at 99%. Drop them immediately.
+            if (type == "settings" || type == "client_status")
+                return;
+
             // Keep the downloads-counter button in sync after every task
             // event — the various Handle*Task handlers below mutate _drops
             // (insertion / removal) in places too scattered to wrap each
