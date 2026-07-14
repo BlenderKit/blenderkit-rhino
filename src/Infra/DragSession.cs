@@ -38,28 +38,33 @@ namespace Blendkit.Rhino.Infra
         // box painted in the viewport. After this long we treat it as a cancel.
         private int _startTick;
         private const int MaxDragMs = 45_000; // 45 s — far beyond any real drag
+        // Latch: only treat "button up" as a release once we've actually
+        // observed it held, so a start-timing glitch can't fire an instant
+        // phantom drop the moment the drag begins.
+        private bool _seenDown;
 
-        // Reliable mouse-up signal. Eto's static Mouse.Buttons polling misses
-        // the up-transition on macOS often enough that drops silently hang
-        // ("Drop to place" box never clears). Rhino's native MouseCallback DOES
-        // see the release over a viewport, so we arm one during the drag and
-        // let it flag the release; Tick() then finishes the drop using the
-        // current cursor position (unchanged tested path). Additive — the
-        // polling still works as before when it does observe the release.
-        private volatile bool _released;
-        private UpWatch _upWatch;
+        // Physical left-button state, read straight from the window server on
+        // macOS via CGEventSourceButtonState. Eto's static Mouse.Buttons is
+        // unreliable here: it can BOTH miss the real release (drop hangs) AND
+        // report a spurious release as the cursor crosses from our Eto panel
+        // into a native viewport (drag ends prematurely on first viewport
+        // contact). The physical button state has neither problem. Windows/
+        // Linux keep Eto polling, which works there.
+        [System.Runtime.InteropServices.DllImport(
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+        [return: System.Runtime.InteropServices.MarshalAs(
+            System.Runtime.InteropServices.UnmanagedType.I1)]
+        private static extern bool CGEventSourceButtonState(int stateID, uint button);
 
-        // Fires on any viewport mouse-up while a drag is active. We only need
-        // the fact of the release, not where — Tick reads the live cursor.
-        private class UpWatch : global::Rhino.UI.MouseCallback
+        private static bool LeftButtonDown()
         {
-            private readonly DragSession _owner;
-            public UpWatch(DragSession owner) { _owner = owner; }
-            protected override void OnMouseUp(global::Rhino.UI.MouseCallbackEventArgs e)
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                if (_owner._started) _owner._released = true;
-                base.OnMouseUp(e);
+                // stateID 0 = kCGEventSourceStateCombinedSessionState,
+                // button 0 = kCGMouseButtonLeft.
+                try { return CGEventSourceButtonState(0, 0); } catch { }
             }
+            return Mouse.Buttons != MouseButtons.None;
         }
 
         public DragPreviewConduit Preview;
@@ -89,9 +94,7 @@ namespace Blendkit.Rhino.Infra
         {
             _started = true;
             _startTick = System.Environment.TickCount;
-            _released = false;
-            // Arm the native mouse-up watcher for reliable release detection.
-            try { _upWatch = new UpWatch(this) { Enabled = true }; } catch { }
+            _seenDown = false;
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
@@ -124,7 +127,6 @@ namespace Blendkit.Rhino.Infra
             _started = false;
             _timer.Stop();
             _wheel?.Uninstall(); _wheel = null;
-            try { if (_upWatch != null) { _upWatch.Enabled = false; _upWatch = null; } } catch { }
             _rayTargets = null;  // release the per-drag mesh refs
             if (disablePreview && Preview != null) Preview.Enabled = false;
             if (_lastView != null) _lastView.Redraw();
@@ -216,11 +218,13 @@ namespace Blendkit.Rhino.Infra
             var (px, py) = GetCursorPhysical();
             var view = ViewAt(px, py);
 
-            // Release detected by EITHER the (flaky on macOS) Eto polling OR the
-            // native MouseCallback — whichever fires first ends the drag. The
-            // drop point is taken from the live cursor position, which hasn't
-            // moved between the release and this tick.
-            if (Mouse.Buttons == MouseButtons.None || _released)
+            // Release = physical left button no longer down (see LeftButtonDown:
+            // reads the real button state on macOS, immune to both the missed
+            // real-release and the spurious cross-into-viewport release that
+            // plagued Eto's Mouse.Buttons). Only after we've seen it held.
+            bool down = LeftButtonDown();
+            if (down) _seenDown = true;
+            if (_seenDown && !down)
             {
                 if (view != null)
                 {
