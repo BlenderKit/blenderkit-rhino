@@ -151,7 +151,10 @@ if [ "$DO_KILL" = "1" ]; then
     # 'saving no'), fall back to pkill.
     if pgrep -x Rhinoceros >/dev/null 2>&1; then
         osascript -e 'tell application id "com.mcneel.rhinoceros.8" to quit saving no' >/dev/null 2>&1 &
-        for _i in 1 2 3 4 5 6 7 8 9 10; do
+        # Give it up to ~12s — a mid-convert/mid-import Rhino can take a while
+        # to reach a quit-able state; force-killing early leaves a crash marker
+        # that pops the recovery dialog on next launch.
+        for _i in $(seq 1 24); do
             pgrep -x Rhinoceros >/dev/null 2>&1 || break
             sleep 0.5
         done

@@ -31,6 +31,13 @@ namespace Blendkit.Rhino.Infra
         private readonly UITimer _timer;
         private bool _started;
         private RhinoView _lastView;
+        // TickCount when the drag started. A safety net: if the mouse-release
+        // is never observed (Eto's static Mouse.Buttons occasionally misses
+        // the up-transition on macOS when the release lands outside our event
+        // stream), the drag would otherwise poll forever and leave its preview
+        // box painted in the viewport. After this long we treat it as a cancel.
+        private int _startTick;
+        private const int MaxDragMs = 45_000; // 45 s — far beyond any real drag
 
         public DragPreviewConduit Preview;
         // (view, hitPoint, surfaceNormal, spinRadians, hitObjectId).
@@ -58,6 +65,7 @@ namespace Blendkit.Rhino.Infra
         public void Start()
         {
             _started = true;
+            _startTick = System.Environment.TickCount;
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
@@ -164,6 +172,15 @@ namespace Blendkit.Rhino.Infra
         private void Tick()
         {
             if (!_started) return;
+            // Safety net: a drag that outlives any plausible real drag means we
+            // missed the mouse-up. Cancel it so the preview box can't hang in
+            // the viewport forever (the "Drop to place" box that never clears).
+            if (System.Environment.TickCount - _startTick > MaxDragMs)
+            {
+                Stop(disablePreview: true);
+                OnCancel?.Invoke();
+                return;
+            }
             // Eto's Mouse.Position is in DIPs (logical pixels) on WPF; on a
             // 200%-DPI display it's half of where the cursor actually is.
             // Win32 GetCursorPos returns raw physical pixels — same space
