@@ -39,6 +39,29 @@ namespace Blendkit.Rhino.Infra
         private int _startTick;
         private const int MaxDragMs = 45_000; // 45 s — far beyond any real drag
 
+        // Reliable mouse-up signal. Eto's static Mouse.Buttons polling misses
+        // the up-transition on macOS often enough that drops silently hang
+        // ("Drop to place" box never clears). Rhino's native MouseCallback DOES
+        // see the release over a viewport, so we arm one during the drag and
+        // let it flag the release; Tick() then finishes the drop using the
+        // current cursor position (unchanged tested path). Additive — the
+        // polling still works as before when it does observe the release.
+        private volatile bool _released;
+        private UpWatch _upWatch;
+
+        // Fires on any viewport mouse-up while a drag is active. We only need
+        // the fact of the release, not where — Tick reads the live cursor.
+        private class UpWatch : global::Rhino.UI.MouseCallback
+        {
+            private readonly DragSession _owner;
+            public UpWatch(DragSession owner) { _owner = owner; }
+            protected override void OnMouseUp(global::Rhino.UI.MouseCallbackEventArgs e)
+            {
+                if (_owner._started) _owner._released = true;
+                base.OnMouseUp(e);
+            }
+        }
+
         public DragPreviewConduit Preview;
         // (view, hitPoint, surfaceNormal, spinRadians, hitObjectId).
         // Normal is +Z when we miss all meshes and fall back to the cplane.
@@ -66,6 +89,9 @@ namespace Blendkit.Rhino.Infra
         {
             _started = true;
             _startTick = System.Environment.TickCount;
+            _released = false;
+            // Arm the native mouse-up watcher for reliable release detection.
+            try { _upWatch = new UpWatch(this) { Enabled = true }; } catch { }
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
@@ -98,6 +124,7 @@ namespace Blendkit.Rhino.Infra
             _started = false;
             _timer.Stop();
             _wheel?.Uninstall(); _wheel = null;
+            try { if (_upWatch != null) { _upWatch.Enabled = false; _upWatch = null; } } catch { }
             _rayTargets = null;  // release the per-drag mesh refs
             if (disablePreview && Preview != null) Preview.Enabled = false;
             if (_lastView != null) _lastView.Redraw();
@@ -189,7 +216,11 @@ namespace Blendkit.Rhino.Infra
             var (px, py) = GetCursorPhysical();
             var view = ViewAt(px, py);
 
-            if (Mouse.Buttons == MouseButtons.None)
+            // Release detected by EITHER the (flaky on macOS) Eto polling OR the
+            // native MouseCallback — whichever fires first ends the drag. The
+            // drop point is taken from the live cursor position, which hasn't
+            // moved between the release and this tick.
+            if (Mouse.Buttons == MouseButtons.None || _released)
             {
                 if (view != null)
                 {
