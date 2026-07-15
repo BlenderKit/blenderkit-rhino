@@ -18,7 +18,15 @@ namespace Blendkit.Rhino
     /// Blendkit for Rhino 8 — plugin entry point.
     /// Registers the dockable panel and ensures a Go client is running.
     /// </summary>
-    [Guid("3f1c9d20-2e6b-4a0c-9d5f-1b7a2e4d4f01")]
+    // Plugin identity. Regenerated for the Blendkit rebrand so this is a
+    // DISTINCT Rhino plugin from the old "BlenderKit" package (which shared
+    // the previous GUID 3f1c9d20-…). Rhino keys plugins + their command
+    // registrations by this GUID; reusing the old one made the new Blendkit
+    // package collide with any prior BlenderKit registration (and with the
+    // deploy_rhino.bat dev-shadow), which manifested as "Unknown command:
+    // Blendkit" after a Package Manager install. Must stay in lockstep with
+    // the [assembly: Guid] in Properties/AssemblyInfo.cs.
+    [Guid("0a97f7d3-b53f-44a5-965e-bd49b688577a")]
     public class BlendkitPlugIn : PlugIn
     {
         public BlendkitPlugIn() { Instance = this; }

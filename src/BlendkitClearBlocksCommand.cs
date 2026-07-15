@@ -13,7 +13,7 @@ namespace Blendkit.Rhino
     /// (the user can still place them via _Insert), it just disconnects
     /// our reuse tracking. Useful while iterating on the import pipeline.
     /// </summary>
-    [Guid("4d2f7a93-8ad1-4f06-9a2e-a26e5d901c11")]
+    [Guid("117f68fb-a4b1-446d-a943-cd23f4c1dc7c")]
     public class BlendkitClearBlocksCommand : Command
     {
         public BlendkitClearBlocksCommand() { Instance = this; }

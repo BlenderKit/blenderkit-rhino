@@ -17,7 +17,7 @@
 # in the description plus the retained `blenderkit` keyword keep the
 # package findable for users searching the old name.
 name: Blendkit
-version: 0.1.5
+version: 0.1.6
 authors:
   - Blendkit
 # Literal block (|) preserves newlines so the alpha warning reads as a

@@ -21,7 +21,7 @@ namespace Blendkit.Rhino
     /// Rhino-compatible format (.gltf/.glb/.obj/.fbx/.stl/.3dm/…) it's imported
     /// into the active document. .blend files are cached but can't be imported.
     /// </summary>
-    [Guid("e2a9c7b0-9d7e-4b5c-a42e-92bb7f3d2f01")]
+    [Guid("d0325db3-9a92-4ed2-90d9-7c9e1905b63b")]
     public class BlendkitPanel : Panel
     {
         public static Guid PanelId => typeof(BlendkitPanel).GUID;

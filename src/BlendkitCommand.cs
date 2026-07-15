@@ -10,7 +10,7 @@ namespace Blendkit.Rhino
     /// Command: `Blendkit` — toggles the dockable panel on/off.
     /// Mirrors Blender's "show/hide N-panel" for the addon.
     /// </summary>
-    [Guid("7c8f2de1-0e0c-4a9c-8f44-78a5de3a1f12")]
+    [Guid("4136314c-7c1b-4a5f-bef0-f263c8e5b078")]
     public class BlendkitCommand : Command
     {
         public BlendkitCommand() { Instance = this; }

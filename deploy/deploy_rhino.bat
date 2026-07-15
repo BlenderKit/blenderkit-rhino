@@ -100,7 +100,7 @@ REM Anyone who's installed Blendkit via Rhino's `_PackageManager` ends
 REM up with the .rhp at
 REM   %APPDATA%\McNeel\Rhinoceros\packages\8.0\Blendkit\<version>\
 REM as well as our dev copy at %TARGET%. Both .rhp files have the SAME
-REM plug-in GUID (the [Guid("3f1c...")] attribute on BlendkitPlugIn),
+REM plug-in GUID (the [Guid("0a97...")] attribute on BlendkitPlugIn),
 REM so Rhino loads whichever its scanner sees first — typically the
 REM packages-tree copy, which is whatever version the user last
 REM installed from yak. The dev deploy then has zero effect on the
@@ -140,7 +140,7 @@ REM points at our deploy. Idempotent (overwrites with the same value
 REM on subsequent runs), no-op when the key doesn't exist yet (Rhino
 REM will create the registration itself on next launch when it
 REM scans the Plug-ins folder).
-set PLUGIN_GUID=3f1c9d20-2e6b-4a0c-9d5f-1b7a2e4d4f01
+set PLUGIN_GUID=0a97f7d3-b53f-44a5-965e-bd49b688577a
 set REGKEY=HKCU\Software\McNeel\Rhinoceros\8.0\Plug-Ins\%PLUGIN_GUID%
 reg query "%REGKEY%" >NUL 2>&1
 if %ERRORLEVEL% EQU 0 (

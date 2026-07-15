@@ -11,7 +11,7 @@
 # listing; old one stays as separate history; `blenderkit` keyword
 # retained for discoverability under the old name).
 name: Blendkit
-version: 0.1.5
+version: 0.1.6
 authors:
   - Blendkit
 description: |

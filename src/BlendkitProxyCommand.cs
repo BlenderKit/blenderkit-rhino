@@ -27,7 +27,7 @@ namespace Blendkit.Rhino
     /// covers the Blendkit-import case; this command is for everything
     /// else (existing scene geometry, manual experimentation).
     /// </summary>
-    [System.Runtime.InteropServices.Guid("c2a4e8f0-1d6f-4f10-9a31-2b9b8c1d4e02")]
+    [System.Runtime.InteropServices.Guid("93523674-74ad-4c1e-aad1-a6fb838fb76a")]
     public class BlendkitProxyCommand : Command
     {
         public override string EnglishName => "BlendkitProxy";

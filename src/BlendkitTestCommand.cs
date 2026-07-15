@@ -18,7 +18,7 @@ namespace Blendkit.Rhino
     /// Lets a CI / iteration loop verify the full pipeline without manual UI
     /// clicks.
     /// </summary>
-    [Guid("9a4b0e21-3c2d-4f8e-9a01-6c4f1a8b2d50")]
+    [Guid("729643f6-d87a-4d5d-98b7-7c7871f25319")]
     public class BlendkitTestCommand : Command
     {
         public BlendkitTestCommand() { Instance = this; }
@@ -56,7 +56,7 @@ namespace Blendkit.Rhino
     /// <summary>Same as BlendkitTest but exercises the MATERIAL pipeline:
     /// downloads a wood material, runs the .blend → JSON extractor, and
     /// imports as a Rhino PBR material.</summary>
-    [Guid("e2f5b430-7a90-4a51-902d-1f0c61d3a812")]
+    [Guid("e1b0b574-382c-4105-afa3-ca4551d452e0")]
     public class BlendkitTestMaterialCommand : BlendkitTestCommand
     {
         public override string EnglishName => "BlendkitTestMaterial";
@@ -73,7 +73,7 @@ namespace Blendkit.Rhino
 
     /// <summary>HDR pipeline smoke test — first hit becomes the doc's
     /// render background.</summary>
-    [Guid("c3d8a210-4e6b-4f79-9b1e-5a07f12c8e44")]
+    [Guid("7088e64b-9048-4c05-8fb9-52218456fb56")]
     public class BlendkitTestHdrCommand : BlendkitTestCommand
     {
         public override string EnglishName => "BlendkitTestHdr";

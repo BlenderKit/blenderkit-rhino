@@ -5,7 +5,12 @@ using Rhino.PlugIns;
 // Plugin GUID. Keep stable across builds — Rhino uses it to identify this
 // plugin in the registered plug-ins list. Changing it means every user has
 // to re-install.
-[assembly: Guid("3f1c9d20-2e6b-4a0c-9d5f-1b7a2e4d4f01")]
+//
+// Regenerated once for the Blendkit rebrand (was 3f1c9d20-…, shared with the
+// old BlenderKit package) so Blendkit is a distinct plugin and doesn't
+// collide with a prior BlenderKit registration. Must match the [Guid] on
+// BlendkitPlugIn.
+[assembly: Guid("0a97f7d3-b53f-44a5-965e-bd49b688577a")]
 
 // Optional Rhino-visible metadata.
 [assembly: PlugInDescription(DescriptionType.Organization, "Blendkit")]
