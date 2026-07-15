@@ -3031,8 +3031,29 @@ namespace Blendkit.Rhino
                     if (uid.ValueKind == JsonValueKind.Number) authorId = uid.GetInt32();
                     else if (uid.ValueKind == JsonValueKind.String && int.TryParse(uid.GetString(), out var n)) authorId = n;
                 }
-                if (hit.TryGetProperty("userDisplayName", out var udn))
+                if (hit.TryGetProperty("userDisplayName", out var udn)
+                    && udn.ValueKind == JsonValueKind.String)
                     authorName = udn.GetString() ?? "";
+                // userDisplayName is usually absent on asset hits — the name
+                // lives in the nested "author" object. Mirror ThumbnailTooltip:
+                // fullName, then firstName + lastName. Without this the chip
+                // showed the raw author id instead of the name.
+                if (string.IsNullOrEmpty(authorName)
+                    && hit.TryGetProperty("author", out var auEl)
+                    && auEl.ValueKind == JsonValueKind.Object)
+                {
+                    if (auEl.TryGetProperty("fullName", out var fn)
+                        && fn.ValueKind == JsonValueKind.String)
+                        authorName = fn.GetString() ?? "";
+                    if (string.IsNullOrEmpty(authorName)
+                        && auEl.TryGetProperty("firstName", out var first))
+                    {
+                        var f = first.GetString() ?? "";
+                        var l = auEl.TryGetProperty("lastName", out var last)
+                            ? (last.GetString() ?? "") : "";
+                        authorName = (f + " " + l).Trim();
+                    }
+                }
             }
 
             if (authorId == 0) { SetStatus("Could not resolve author id from hit."); return; }
