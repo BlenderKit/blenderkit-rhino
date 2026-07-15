@@ -3721,6 +3721,10 @@ namespace Blendkit.Rhino
             var session = new DragSession { Preview = drop.Preview };
             session.OnDrop = (view, pt, normal, spin, hitId) =>
             {
+                // Drag is over — release the import block FIRST so this drop's
+                // own placement (below) runs immediately, then replay anything
+                // that completed while dragging.
+                EndDragBlock();
                 BkLog.W($"drop at ({pt.X:F2},{pt.Y:F2},{pt.Z:F2}) normal=({normal.X:F2},{normal.Y:F2},{normal.Z:F2}) spin={spin:F2} hit={hitId}");
                 drop.DropPoint = pt;
                 drop.Normal = normal;
@@ -3767,12 +3771,14 @@ namespace Blendkit.Rhino
             };
             session.OnCancel = () =>
             {
+                EndDragBlock();
                 ClearDropPreview(drop);
                 _drops.Remove(drop);
                 SetStatus(alreadyDownloaded
                     ? "Drop cancelled — released outside any viewport."
                     : $"Drop cancelled for '{drop.AssetName}'.");
             };
+            BeginDragBlock();
             session.Start();
             // Tooltip-style hint on the preview cube too, in case the user
             // doesn't watch the status line.
@@ -4507,13 +4513,30 @@ namespace Blendkit.Rhino
         private static bool _importInProgress;
         private static readonly System.Collections.Generic.Queue<Action> _pendingImports = new();
 
+        // Drag-block: while the user is actively dragging (one or more live
+        // DragSessions), _-Import must NOT run. It executes on the UI thread and
+        // blocks it for its whole duration, which freezes the drag's 30Hz
+        // tracker (box stops following, release can be missed) AND mutates the
+        // doc, invalidating the drag's ray-target snapshot (→ raycast throws).
+        // Any import that completes mid-drag is parked here and replayed the
+        // moment the last drag ends. UI-thread-only, so no locking.
+        private static int _dragBlockActive;
+        private static readonly System.Collections.Generic.Queue<Action> _postponedDuringDrag = new();
+
         /// <summary>
         /// Run <paramref name="work"/> with the global "an import is running"
-        /// flag set. If something is already running, enqueue and bail —
-        /// the in-progress import's finally-block will drain the queue.
+        /// flag set. If a drag is in progress, park it until the drag ends. If
+        /// an import is already running, enqueue and bail — the in-progress
+        /// import's finally-block will drain the queue.
         /// </summary>
         private static void RunImportSerialized(Action work)
         {
+            if (_dragBlockActive > 0)
+            {
+                _postponedDuringDrag.Enqueue(work);
+                BkLog.W($"RunImportSerialized: drag in progress, postponed ({_postponedDuringDrag.Count} held)");
+                return;
+            }
             if (_importInProgress)
             {
                 _pendingImports.Enqueue(work);
@@ -4534,6 +4557,23 @@ namespace Blendkit.Rhino
                     RhinoApp.InvokeOnUiThread((Action)(() => RunImportSerialized(next)));
                 }
             }
+        }
+
+        /// <summary>Mark a drag as active — imports park until it (and any other
+        /// live drag) ends. Call once per StartDrag, on the UI thread.</summary>
+        private static void BeginDragBlock() => _dragBlockActive++;
+
+        /// <summary>Mark a drag as ended. When the LAST drag ends, replay every
+        /// import that completed while dragging. UI thread only.</summary>
+        private static void EndDragBlock()
+        {
+            if (_dragBlockActive > 0) _dragBlockActive--;
+            if (_dragBlockActive != 0 || _postponedDuringDrag.Count == 0) return;
+            var held = _postponedDuringDrag.ToArray();
+            _postponedDuringDrag.Clear();
+            BkLog.W($"drag ended — replaying {held.Length} postponed import(s)");
+            foreach (var w in held)
+                RhinoApp.InvokeOnUiThread((Action)(() => RunImportSerialized(w)));
         }
 
         /// <summary>
