@@ -39,6 +39,12 @@ namespace Blendkit.Rhino
         private readonly CheckBox _freeOnly = new CheckBox { Text = "Free only", Checked = false };
         private readonly CheckBox _animated = new CheckBox { Text = "Animated only", Checked = false };
         private readonly CheckBox _bookmarksOnly = new CheckBox { Text = "My bookmarks", Checked = false };
+        // "Downloaded only": client-side filter (the server can't know what
+        // YOU downloaded) — hides search hits whose files aren't already on
+        // disk. Captured to _downloadedOnlyActive on the UI thread at search
+        // time so RenderResults (background thread) can read it safely.
+        private readonly CheckBox _downloadedOnly = new CheckBox { Text = "Downloaded only", Checked = false };
+        private volatile bool _downloadedOnlyActive;
         // Per-asset-type extras matching blenderkit/ui_panels.py:
         //   MODEL only: geometry_nodes (modifiers:nodes URL token).
         //   HDR only:   true_hdr (trueHDR URL token).
@@ -750,6 +756,7 @@ namespace Blendkit.Rhino
                 inner.Add(WrapCheck(_freeOnly, "Free only"));
                 inner.Add(WrapCheck(_animated, "Animated only"));
                 inner.Add(WrapCheck(_bookmarksOnly, "My bookmarks"));
+                inner.Add(WrapCheck(_downloadedOnly, "Downloaded only"));
                 inner.EndHorizontal();
                 togglesRow.Content = inner;
             }
@@ -899,10 +906,11 @@ namespace Blendkit.Rhino
             // pair it with a separate Label whose TextColor we control.
             // Done elsewhere on construction via WrapCheck(). Here we just
             // make sure the boxes themselves don't carry stale text.
-            foreach (var cb in new[] { _freeOnly, _animated, _bookmarksOnly, _designYearEnable, _gltfOnly })
+            foreach (var cb in new[] { _freeOnly, _animated, _bookmarksOnly, _designYearEnable, _gltfOnly, _downloadedOnly })
                 cb.TextColor = BkColors.DarkText;
             _freeOnly.CheckedChanged += refire;
             _animated.CheckedChanged += refire;
+            _downloadedOnly.CheckedChanged += refire;
             // _resolution is for the *download* size (1K / 2K / etc.) —
             // not a search filter. Don't re-search when it changes.
             // (User explicitly flagged this; previously we re-fired
@@ -2905,6 +2913,8 @@ namespace Blendkit.Rhino
                     () => { _activeAuthorId = 0; _activeAuthorName = ""; });
             if (_freeOnly.Checked == true)
                 AddChip("free only", () => _freeOnly.Checked = false);
+            if (_downloadedOnly.Checked == true)
+                AddChip("downloaded only", () => _downloadedOnly.Checked = false);
             if (isModelLike && _animated.Checked == true)
                 AddChip("animated", () => _animated.Checked = false);
             if (_quality.Value > 0)
@@ -2969,6 +2979,7 @@ namespace Blendkit.Rhino
                 _freeOnly.Checked = false;
                 _animated.Checked = false;
                 _bookmarksOnly.Checked = false;
+                _downloadedOnly.Checked = false;
                 _quality.Value = 0;
                 _license.SelectedIndex = 0;
                 _order.SelectedIndex = 0;
@@ -3148,6 +3159,10 @@ namespace Blendkit.Rhino
             bool isModel = at == "MODEL" || at == "PRINTABLE";
             bool isMaterial = at == "MATERIAL";
             bool isHdr = at == "HDR";
+
+            // Capture the client-side "downloaded only" flag now (UI thread);
+            // RenderResults filters against it off the search task thread.
+            _downloadedOnlyActive = _downloadedOnly.Checked == true;
 
             var f = new SearchService.Filters
             {
@@ -6219,10 +6234,18 @@ namespace Blendkit.Rhino
 
             // No more glTF-only filtering — we now download .blend files
             // and convert via a headless Blender pass (BlenderService), so
-            // every asset is reachable.
-            foreach (var hit in arr.EnumerateArray()) _hits.Add(hit.Clone());
+            // every asset is reachable. The one client-side filter left is
+            // "Downloaded only": drop hits whose files aren't on disk.
+            int skipped = 0;
+            foreach (var hit in arr.EnumerateArray())
+            {
+                if (_downloadedOnlyActive && !IsAssetDownloaded(hit)) { skipped++; continue; }
+                _hits.Add(hit.Clone());
+            }
             RhinoApp.InvokeOnUiThread((Action)(() => _grid.SetHits(_hits, append)));
-            SetStatus($"{_hits.Count} of {_resultCount} results. Double-click or drag.");
+            SetStatus(_downloadedOnlyActive
+                ? $"{_hits.Count} downloaded (of {_resultCount} matches). Double-click or drag."
+                : $"{_hits.Count} of {_resultCount} results. Double-click or drag.");
 
             // Self-test: if the test command primed a query, auto-download
             // the first hit so the whole pipeline runs without UI clicks.
@@ -6236,6 +6259,43 @@ namespace Blendkit.Rhino
                 BkLog.W($"[TEST] auto-downloading first hit: {(first.TryGetProperty("name", out var nm) ? nm.GetString() : "?")}");
                 RhinoApp.InvokeOnUiThread((Action)(() => { _ = StartDownloadFor(first); }));
             }
+        }
+
+        /// <summary>
+        /// True if the asset already has downloaded files on disk. Assets land
+        /// in &lt;globalDir&gt;/&lt;type&gt;s/&lt;slug&gt;_&lt;id&gt;/ — we match a subdir
+        /// containing either the asset id or its assetBaseId (the client's
+        /// naming has varied) that holds an importable/convertible file. Safe
+        /// to call off the UI thread (pure disk I/O). Used by the
+        /// "Downloaded only" filter.
+        /// </summary>
+        private static bool IsAssetDownloaded(JsonElement hit)
+        {
+            try
+            {
+                var ids = new System.Collections.Generic.List<string>();
+                if (hit.TryGetProperty("assetBaseId", out var b) && b.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrEmpty(b.GetString())) ids.Add(b.GetString());
+                if (hit.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrEmpty(idEl.GetString())) ids.Add(idEl.GetString());
+                if (ids.Count == 0) return false;
+
+                var assetType = (hit.TryGetProperty("assetType", out var at) ? at.GetString() : "model") ?? "model";
+                var dir = System.IO.Path.Combine(BlendkitPlugIn.DefaultGlobalDir,
+                    assetType.ToLowerInvariant() + "s");
+                if (!System.IO.Directory.Exists(dir)) return false;
+
+                foreach (var id in ids)
+                    foreach (var sub in System.IO.Directory.EnumerateDirectories(dir, "*" + id + "*"))
+                        foreach (var file in System.IO.Directory.EnumerateFiles(sub))
+                        {
+                            var ext = System.IO.Path.GetExtension(file).ToLowerInvariant();
+                            if (ext == ".blend" || DownloadService.IsRhinoImportable(file))
+                                return true;
+                        }
+                return false;
+            }
+            catch { return false; }
         }
 
         private void SetStatus(string msg)
