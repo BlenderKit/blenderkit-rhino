@@ -1635,6 +1635,18 @@ namespace Blendkit.Rhino
 
         private void ReapStuckDrops()
         {
+            // Self-heal the import drag-block: if no DragSession is actually
+            // live but the block count says otherwise (a session died without
+            // firing OnDrop/OnCancel — shouldn't happen now that sessions are
+            // GC-rooted, but belt-and-braces), reset it and release any
+            // postponed imports so downloads can't stall behind a leak.
+            if (_dragBlockActive > 0 && DragSession.LiveCount == 0)
+            {
+                BkLog.W($"[dragtrace] reaper: drag-block leak detected (count={_dragBlockActive}, live=0) — resetting");
+                _dragBlockActive = 1;
+                EndDragBlock(); // drops to 0 + replays postponed imports
+            }
+
             int now = Environment.TickCount;
             bool anyActive = false;
             foreach (var d in _drops.ToArray())
@@ -1649,7 +1661,10 @@ namespace Blendkit.Rhino
                 }
                 else anyActive = true;
             }
-            if (!anyActive) _reaperTimer?.Stop();
+            // Stay alive while any drag is live (for the drag-block self-heal
+            // above) or download work is pending; stop only when fully idle.
+            if (!anyActive && DragSession.LiveCount == 0 && _dragBlockActive == 0)
+                _reaperTimer?.Stop();
         }
 
         /// <summary>
@@ -2453,6 +2468,9 @@ namespace Blendkit.Rhino
             BlendkitPlugIn.TestAssetType = assetType ?? "MODEL";
             RhinoApp.InvokeOnUiThread((Action)(() =>
             {
+                // Test searches must not inherit the user's session filters —
+                // a stale category or polycount silently yields 0 results.
+                ResetFiltersNoSearch();
                 // Suppress the cascade — both _searchBox.Text and
                 // _assetType.SelectedIndex assignments fire
                 // TextChanged / SelectedIndexChanged → DebouncedResearch
@@ -2966,9 +2984,18 @@ namespace Blendkit.Rhino
 
         private void ClearAllFilters()
         {
+            ResetFiltersNoSearch();
+            OnSearch();
+        }
+
+        /// <summary>Reset every filter control to its default without firing a
+        /// search (events suppressed). Used by ClearAllFilters and by the test
+        /// harness, whose searches must not inherit the user's session filters
+        /// (a stale category/polycount silently yields 0 results).</summary>
+        private void ResetFiltersNoSearch()
+        {
             // Suppress cascading events so we don't fire 14 partial
-            // searches as we clear each control. We run exactly one
-            // OnSearch at the end with the final state.
+            // searches as we clear each control.
             _suppressSearchEvents = true;
             try
             {
@@ -2990,7 +3017,6 @@ namespace Blendkit.Rhino
                 _designYearEnable.Checked = false;
             }
             finally { _suppressSearchEvents = false; }
-            OnSearch();
         }
 
         // ---------- Author filter (clicking an author chip in results) ----------
@@ -3778,7 +3804,19 @@ namespace Blendkit.Rhino
                     ? "Drop cancelled — released outside any viewport."
                     : $"Drop cancelled for '{drop.AssetName}'.");
             };
+            // Self-test harness: if a simulated drag is pending, arm the
+            // session to ignore the real mouse and run a scripted from→to
+            // sweep instead (see DragSession.Simulate + RunSimulatedDrops).
+            if (_pendingSim.HasValue)
+            {
+                var s = _pendingSim.Value; _pendingSim = null;
+                session.Simulate(s.durationMs, s.from, s.to);
+                BkLog.W($"[simdrop] armed sim drag: {s.durationMs}ms ({s.from.x},{s.from.y})->({s.to.x},{s.to.y})");
+            }
             BeginDragBlock();
+            // Arm the reaper for every drag (not just deferred-download drops)
+            // so its drag-block self-heal check is always live.
+            EnsureReaperRunning();
             session.Start();
             // Tooltip-style hint on the preview cube too, in case the user
             // doesn't watch the status line.
@@ -4561,13 +4599,69 @@ namespace Blendkit.Rhino
 
         /// <summary>Mark a drag as active — imports park until it (and any other
         /// live drag) ends. Call once per StartDrag, on the UI thread.</summary>
-        private static void BeginDragBlock() => _dragBlockActive++;
+        private static void BeginDragBlock()
+        {
+            _dragBlockActive++;
+            BkLog.W($"[dragtrace] BeginDragBlock -> count={_dragBlockActive}");
+        }
+
+        // ==== Simulated drag-drop (self-test harness) =========================
+        // BlendkitSimDrop drives the REAL drag pipeline with no physical mouse:
+        // for each step it arms _pendingSim, then calls OnDragStart(hit) — the
+        // exact entry the thumbnail grid uses — so StartDrag/DragSession/
+        // OnDrop/download/convert/import all run authentically. Steps are
+        // staggered to emulate the user's rapid-consecutive-drags recipe.
+        private (int durationMs, (int x, int y) from, (int x, int y) to)? _pendingSim;
+        /// <summary>Sim-drops queued by BlendkitSimDrop to start once search
+        /// results land (RenderResults hook). 0 = none.</summary>
+        public static int SimDropsPending;
+        private Eto.Forms.UITimer _simTimer;
+
+        /// <summary>Run <paramref name="count"/> simulated drag-drops over the
+        /// current search hits, one every ~1.2s. UI thread only.</summary>
+        public void RunSimulatedDrops(int count)
+        {
+            if (_hits.Count == 0) { SetStatus("[simdrop] no hits — search first."); return; }
+            var doc = global::Rhino.RhinoDoc.ActiveDoc;
+            var view = doc?.Views?.ActiveView;
+            if (view == null) { SetStatus("[simdrop] no active view."); return; }
+            var rect = view.ScreenRectangle;
+            var rnd = new Random(12345); // deterministic spread
+            int step = 0;
+            BkLog.W($"[simdrop] starting {count} simulated drags over {_hits.Count} hits (view rect {rect.Width}x{rect.Height})");
+            _simTimer?.Stop();
+            _simTimer = new Eto.Forms.UITimer { Interval = 1.2 };
+            _simTimer.Elapsed += (s, e) =>
+            {
+                if (step >= count)
+                {
+                    _simTimer.Stop();
+                    BkLog.W($"[simdrop] DONE — {count} sim drags dispatched (live sessions now={DragSession.LiveCount}, dragBlock={_dragBlockActive})");
+                    return;
+                }
+                var hit = _hits[step % _hits.Count];
+                var name = hit.TryGetProperty("name", out var nm) ? nm.GetString() : "?";
+                // Sweep from just inside the view's left edge to a scattered
+                // interior point — always inside the viewport so the release
+                // lands as a DROP, like the user's real drags.
+                var from = (rect.Left + 40, rect.Top + rect.Height / 2);
+                var to = (rect.Left + rect.Width / 4 + rnd.Next(rect.Width / 2),
+                          rect.Top + rect.Height / 4 + rnd.Next(rect.Height / 2));
+                _pendingSim = (600, from, to);
+                BkLog.W($"[simdrop] step {step + 1}/{count}: '{name}'");
+                try { OnDragStart(hit); }
+                catch (Exception ex) { BkLog.W("[simdrop] OnDragStart threw: " + ex.Message); }
+                step++;
+            };
+            _simTimer.Start();
+        }
 
         /// <summary>Mark a drag as ended. When the LAST drag ends, replay every
         /// import that completed while dragging. UI thread only.</summary>
         private static void EndDragBlock()
         {
             if (_dragBlockActive > 0) _dragBlockActive--;
+            BkLog.W($"[dragtrace] EndDragBlock -> count={_dragBlockActive} postponed={_postponedDuringDrag.Count}");
             if (_dragBlockActive != 0 || _postponedDuringDrag.Count == 0) return;
             var held = _postponedDuringDrag.ToArray();
             _postponedDuringDrag.Clear();
@@ -6298,6 +6392,14 @@ namespace Blendkit.Rhino
                 BlendkitPlugIn.TestQuery = null; // one-shot
                 BkLog.W($"[TEST] auto-downloading first hit: {(first.TryGetProperty("name", out var nm) ? nm.GetString() : "?")}");
                 RhinoApp.InvokeOnUiThread((Action)(() => { _ = StartDownloadFor(first); }));
+            }
+
+            // Self-test harness: BlendkitSimDrop queued sim-drags to run once
+            // results are in. One-shot.
+            if (SimDropsPending > 0 && _hits.Count > 0)
+            {
+                var simN = SimDropsPending; SimDropsPending = 0;
+                RhinoApp.InvokeOnUiThread((Action)(() => RunSimulatedDrops(simN)));
             }
         }
 

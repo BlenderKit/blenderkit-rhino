@@ -58,6 +58,62 @@ namespace Blendkit.Rhino.Infra
         private int _lastOverViewTick;
         private const int CancelOutsideMs = 250;
 
+        // ---- Diagnostics: trace the full life of each drag session ----
+        private static int _nextId;
+        private int _id;
+        private int _tickCount;
+        private bool _lastLoggedDown;
+        private bool _lastLoggedOverView;
+
+        // GC ROOT for live sessions. THE stuck-drag bug: DragSession is a
+        // local in BlendkitPanel.StartDrag — after it returns, nothing roots
+        // the session or its UITimer. Rapid consecutive drags allocate large
+        // ray-target caches → memory pressure → GC → the live drag's timer is
+        // collected MID-DRAG and ticking stops silently: no release, no
+        // timeout, box stuck at "drop to place", and the panel's drag-block
+        // count leaks (postponing all imports forever → downloads "stuck at
+        // 99%"). Dragtrace showed sessions S#3/S#6/S#8 logging a tick or two
+        // then vanishing without STOP. Root every started session here;
+        // Stop() removes it.
+        private static readonly HashSet<DragSession> _liveSessions = new HashSet<DragSession>();
+
+        /// <summary>Number of drag sessions currently live (started, not yet
+        /// stopped). Lets the panel self-heal its import drag-block if a
+        /// session ever ends without firing its callbacks.</summary>
+        public static int LiveCount { get { lock (_liveSessions) return _liveSessions.Count; } }
+
+        // ==== Simulation mode (self-test harness) ====
+        // When armed, the session ignores the real mouse entirely: the button
+        // reads "held" until the duration elapses and the cursor lerps
+        // from→to (same coordinate space as RhinoView.ScreenRectangle). This
+        // exercises the REAL drag pipeline — UITimer ticks, ray-target cache,
+        // preview conduit, release → OnDrop → download/convert/import — with
+        // no physical mouse, so stuck-drag bugs (incl. the GC-collected-timer
+        // class) can be reproduced and verified headlessly via BlendkitSimDrop.
+        private int _simEndTick;
+        private int _simDurationMs;
+        private (int x, int y) _simFrom, _simTo;
+
+        /// <summary>Arm simulation. Call BEFORE Start().</summary>
+        public void Simulate(int durationMs, (int x, int y) from, (int x, int y) to)
+        {
+            _simDurationMs = Math.Max(durationMs, 100);
+            _simEndTick = 1; // armed; real end tick set in Start()
+            _simFrom = from; _simTo = to;
+        }
+
+        private bool SimActive => _simEndTick != 0;
+
+        private bool SimButtonDown() => System.Environment.TickCount < _simEndTick;
+
+        private (int x, int y) SimCursor()
+        {
+            double p = (System.Environment.TickCount - _startTick) / (double)_simDurationMs;
+            if (p < 0) p = 0; if (p > 1) p = 1;
+            return ((int)(_simFrom.x + (_simTo.x - _simFrom.x) * p),
+                    (int)(_simFrom.y + (_simTo.y - _simFrom.y) * p));
+        }
+
         // Physical left-button state, read straight from the window server on
         // macOS via CGEventSourceButtonState. Eto's static Mouse.Buttons is
         // unreliable here: it can BOTH miss the real release (drop hangs) AND
@@ -108,10 +164,17 @@ namespace Blendkit.Rhino.Infra
         public void Start()
         {
             _started = true;
+            lock (_liveSessions) _liveSessions.Add(this); // GC root (see field)
+            _id = ++_nextId;
+            _tickCount = 0;
             _startTick = System.Environment.TickCount;
+            if (SimActive) _simEndTick = _startTick + _simDurationMs;
             _seenDown = true; // button is held at drag start (see field comment)
             _wasOverView = false;
             _lastOverViewTick = 0;
+            _lastLoggedDown = true;
+            _lastLoggedOverView = false;
+            try { BkLog.W($"[dragtrace] S#{_id} START (physBtn={LeftButtonDown()})"); } catch { }
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
@@ -141,7 +204,9 @@ namespace Blendkit.Rhino.Infra
 
         private void Stop(bool disablePreview = true)
         {
+            try { BkLog.W($"[dragtrace] S#{_id} STOP (disablePreview={disablePreview})"); } catch { }
             _started = false;
+            lock (_liveSessions) _liveSessions.Remove(this); // un-root
             _timer.Stop();
             _wheel?.Uninstall(); _wheel = null;
             _rayTargets = null;  // release the per-drag mesh refs
@@ -229,32 +294,50 @@ namespace Blendkit.Rhino.Infra
             // throws. So: read the button + fire the release defensively, and
             // wrap the raycast-heavy parts so a bad tick is skipped, not fatal.
 
+            _tickCount++;
+
             // Safety net: a drag that outlives any plausible real drag means we
             // missed the mouse-up — cancel so the box can't hang.
             if (System.Environment.TickCount - _startTick > MaxDragMs)
             {
+                try { BkLog.W($"[dragtrace] S#{_id} TIMEOUT t={_tickCount}"); } catch { }
                 Stop(disablePreview: true);
                 try { OnCancel?.Invoke(); } catch { }
                 return;
             }
 
             // Physical left-button state (immune to macOS synthetic events).
+            // Simulation mode overrides both button and cursor (self-test).
             bool down;
-            try { down = LeftButtonDown(); } catch { down = false; }
+            if (SimActive) down = SimButtonDown();
+            else { try { down = LeftButtonDown(); } catch { down = false; } }
             if (down) _seenDown = true;
 
             int px = 0, py = 0;
-            try { (px, py) = GetCursorPhysical(); } catch { }
+            if (SimActive) (px, py) = SimCursor();
+            else { try { (px, py) = GetCursorPhysical(); } catch { } }
 
             RhinoView view = null;
             try { view = ViewAt(px, py); } catch { }
-            if (view != null) { _wasOverView = true; _lastOverViewTick = System.Environment.TickCount; }
+            bool overView = view != null;
+            if (overView) { _wasOverView = true; _lastOverViewTick = System.Environment.TickCount; }
+
+            // Trace: log every button/view transition + a 1s heartbeat, so we
+            // can see whether a stuck session is still ticking and why it
+            // isn't releasing. [dragtrace] tag makes it greppable.
+            if (down != _lastLoggedDown || overView != _lastLoggedOverView || _tickCount % 30 == 0)
+            {
+                try { BkLog.W($"[dragtrace] S#{_id} t={_tickCount} down={(down ? 1 : 0)} view={(overView ? 1 : 0)} seenDown={(_seenDown ? 1 : 0)} px={px} py={py}"); } catch { }
+                _lastLoggedDown = down;
+                _lastLoggedOverView = overView;
+            }
 
             // Cancel-on-leave: entered a viewport, then left it (and stayed out
             // past the debounce). Clears the box instead of stranding it.
             if (_wasOverView && view == null
                 && System.Environment.TickCount - _lastOverViewTick > CancelOutsideMs)
             {
+                try { BkLog.W($"[dragtrace] S#{_id} CANCEL-ON-LEAVE t={_tickCount}"); } catch { }
                 Stop(disablePreview: true);
                 try { OnCancel?.Invoke(); } catch { }
                 return;
@@ -265,6 +348,7 @@ namespace Blendkit.Rhino.Infra
                 // RELEASE. Must ALWAYS resolve here even if the raycast throws,
                 // otherwise the drop is lost and the box strands. Fall back to
                 // a safe point rather than skipping the drop.
+                try { BkLog.W($"[dragtrace] S#{_id} RELEASE t={_tickCount} view={(view != null ? 1 : 0)} -> {(view != null ? "DROP" : "CANCEL")}"); } catch { }
                 if (view != null)
                 {
                     var pt = Point3d.Origin; var normal = Vector3d.ZAxis; var hitId = Guid.Empty;

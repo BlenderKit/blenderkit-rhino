@@ -87,4 +87,46 @@ namespace Blendkit.Rhino
             return Result.Success;
         }
     }
+
+    /// <summary>
+    /// Simulated rapid drag-drop harness. Usage (scripted):
+    ///     _-BlendkitSimDrop 6 chair _Enter
+    /// Runs a search for the query, then dispatches N simulated drags over the
+    /// results — each drives the REAL drag pipeline (DragSession timer, ray
+    /// cache, release → OnDrop → download/convert/import) with a scripted
+    /// mouse, staggered like the user's rapid-drag recipe. Watch progress via
+    /// [simdrop]/[dragtrace] lines in rhino_panel.log.
+    /// </summary>
+    [Guid("d7e2c941-88af-4b0d-b6a3-2e91f04c7a55")]
+    public class BlendkitSimDropCommand : BlendkitTestCommand
+    {
+        public override string EnglishName => "BlendkitSimDrop";
+        protected override Result RunCommand(RhinoDoc doc, RunMode mode)
+        {
+            int count = 6;
+            string query = "chair";
+            var rc = global::Rhino.Input.RhinoGet.GetInteger("Number of simulated drops", true, ref count);
+            if (rc != Result.Success && rc != Result.Nothing) return rc;
+            rc = global::Rhino.Input.RhinoGet.GetString("Search query", true, ref query);
+            if (rc != Result.Success && rc != Result.Nothing) return rc;
+            if (count < 1) count = 1;
+
+            BkLog.StartSession($"BlendkitSimDrop count={count} query={query}");
+            BkLog.W($"[simdrop] invoked: count={count} query='{query}'");
+            BlendkitPanel.SimDropsPending = count;
+
+            var id = BlendkitPanel.PanelId;
+            if (!Panels.IsPanelVisible(id)) Panels.OpenPanel(id);
+            if (BlendkitPanel.ActiveInstance != null)
+            {
+                BlendkitPanel.ActiveInstance.TriggerTestSearch(query, "MODEL");
+                // TriggerTestSearch arms the TestQuery auto-download of the
+                // first hit — not wanted here (the sim drags are the test).
+                BlendkitPlugIn.TestQuery = null;
+            }
+            else
+                BkLog.W("[simdrop] panel instance not live yet — reopen the panel and re-run.");
+            return Result.Success;
+        }
+    }
 }
