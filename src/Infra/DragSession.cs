@@ -48,6 +48,15 @@ namespace Blendkit.Rhino.Infra
         // and without the latch pre-set it would never fire the drop, leaving
         // the "Cached — drop to place" box hanging until the 45s reaper.
         private bool _seenDown;
+        // Cancel-on-leave: once the cursor has been over a viewport, moving it
+        // back OUT of every viewport (to the asset panel, a toolbar, another
+        // app) cancels the drag — matches the user's mental model and, more
+        // importantly, guarantees the "drop to place" box can't strand when the
+        // release lands outside a viewport. Debounced so crossing the thin gap
+        // between quad viewports (a momentary view==null) doesn't cancel.
+        private bool _wasOverView;
+        private int _lastOverViewTick;
+        private const int CancelOutsideMs = 250;
 
         // Physical left-button state, read straight from the window server on
         // macOS via CGEventSourceButtonState. Eto's static Mouse.Buttons is
@@ -101,6 +110,8 @@ namespace Blendkit.Rhino.Infra
             _started = true;
             _startTick = System.Environment.TickCount;
             _seenDown = true; // button is held at drag start (see field comment)
+            _wasOverView = false;
+            _lastOverViewTick = 0;
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
@@ -235,13 +246,25 @@ namespace Blendkit.Rhino.Infra
             int px = 0, py = 0;
             try { (px, py) = GetCursorPhysical(); } catch { }
 
+            RhinoView view = null;
+            try { view = ViewAt(px, py); } catch { }
+            if (view != null) { _wasOverView = true; _lastOverViewTick = System.Environment.TickCount; }
+
+            // Cancel-on-leave: entered a viewport, then left it (and stayed out
+            // past the debounce). Clears the box instead of stranding it.
+            if (_wasOverView && view == null
+                && System.Environment.TickCount - _lastOverViewTick > CancelOutsideMs)
+            {
+                Stop(disablePreview: true);
+                try { OnCancel?.Invoke(); } catch { }
+                return;
+            }
+
             if (_seenDown && !down)
             {
                 // RELEASE. Must ALWAYS resolve here even if the raycast throws,
                 // otherwise the drop is lost and the box strands. Fall back to
                 // a safe point rather than skipping the drop.
-                RhinoView view = null;
-                try { view = ViewAt(px, py); } catch { }
                 if (view != null)
                 {
                     var pt = Point3d.Origin; var normal = Vector3d.ZAxis; var hitId = Guid.Empty;
@@ -263,7 +286,6 @@ namespace Blendkit.Rhino.Infra
             // harmless (we just skip this frame's preview update).
             try
             {
-                var view = ViewAt(px, py);
                 if (view != null && Preview != null)
                 {
                     var (pt, normal, hitId) = ProjectWithNormal(view, px, py);
