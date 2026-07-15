@@ -38,9 +38,15 @@ namespace Blendkit.Rhino.Infra
         // box painted in the viewport. After this long we treat it as a cancel.
         private int _startTick;
         private const int MaxDragMs = 45_000; // 45 s — far beyond any real drag
-        // Latch: only treat "button up" as a release once we've actually
-        // observed it held, so a start-timing glitch can't fire an instant
-        // phantom drop the moment the drag begins.
+        // Latch: a release only counts once the button has been observed held.
+        // Seeded TRUE at Start() because a drag only begins after the 30px
+        // threshold is crossed WITH the button down (ThumbnailGrid.MouseMove) —
+        // so the button is definitionally held at drag start. Seeding it here
+        // (rather than waiting for the first 30Hz tick to observe "down") is
+        // what fixes stuck quick FLICK-drops: if the user releases within the
+        // ~33ms before the first tick, that tick sees the button already up —
+        // and without the latch pre-set it would never fire the drop, leaving
+        // the "Cached — drop to place" box hanging until the 45s reaper.
         private bool _seenDown;
 
         // Physical left-button state, read straight from the window server on
@@ -94,7 +100,7 @@ namespace Blendkit.Rhino.Infra
         {
             _started = true;
             _startTick = System.Environment.TickCount;
-            _seenDown = false;
+            _seenDown = true; // button is held at drag start (see field comment)
             // Build the ray-target cache ONCE here so ProjectWithNormal's
             // per-tick loop doesn't have to walk RhinoDoc.ActiveDoc.Objects
             // and (worst case) Duplicate+Transform every InstanceObject
