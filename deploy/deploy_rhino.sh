@@ -163,6 +163,15 @@ if [ "$DO_KILL" = "1" ]; then
             pkill -x Rhinoceros || true
         fi
     fi
+    # Kill any running Blendkit client too. EnsureGoClient attaches to an
+    # EXISTING client on port 62485 instead of spawning a fresh one — so a
+    # stale client (e.g. left running by `dev.py run`, or a persistent
+    # daemon from a prior version) SHADOWS the freshly-deployed binary and
+    # its embedded recipe. This was a real, hard-to-spot footgun: the deploy
+    # succeeds but Rhino keeps talking to the old client. Kill them all so
+    # the plug-in respawns the one we just deployed.
+    pkill -f "bk_client-" 2>/dev/null || true
+    pkill -f "blenderkit-client-" 2>/dev/null || true
     sleep 1
 fi
 
