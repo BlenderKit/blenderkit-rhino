@@ -207,60 +207,78 @@ namespace Blendkit.Rhino.Infra
         private void Tick()
         {
             if (!_started) return;
+
+            // CRITICAL: nothing in Tick may let an exception escape — the
+            // UITimer's Elapsed handler dies on an uncaught throw and the drag
+            // then never ticks again (no release, no timeout, no reaper coverage
+            // for cached drags → the "Cached — drop to place" box hangs forever).
+            // Rapid dragging is the trigger: a placement from a prior drop
+            // mutates the doc, so this drag's ray-target cache (a drag-start
+            // snapshot) can hold stale/disposed mesh refs and ProjectWithNormal
+            // throws. So: read the button + fire the release defensively, and
+            // wrap the raycast-heavy parts so a bad tick is skipped, not fatal.
+
             // Safety net: a drag that outlives any plausible real drag means we
-            // missed the mouse-up. Cancel it so the preview box can't hang in
-            // the viewport forever (the "Drop to place" box that never clears).
+            // missed the mouse-up — cancel so the box can't hang.
             if (System.Environment.TickCount - _startTick > MaxDragMs)
             {
                 Stop(disablePreview: true);
-                OnCancel?.Invoke();
+                try { OnCancel?.Invoke(); } catch { }
                 return;
             }
-            // Eto's Mouse.Position is in DIPs (logical pixels) on WPF; on a
-            // 200%-DPI display it's half of where the cursor actually is.
-            // Win32 GetCursorPos returns raw physical pixels — same space
-            // Rhino.RhinoView.ScreenRectangle uses — so positions match
-            // regardless of DPI.
-            var (px, py) = GetCursorPhysical();
-            var view = ViewAt(px, py);
 
-            // Release = physical left button no longer down (see LeftButtonDown:
-            // reads the real button state on macOS, immune to both the missed
-            // real-release and the spurious cross-into-viewport release that
-            // plagued Eto's Mouse.Buttons). Only after we've seen it held.
-            bool down = LeftButtonDown();
+            // Physical left-button state (immune to macOS synthetic events).
+            bool down;
+            try { down = LeftButtonDown(); } catch { down = false; }
             if (down) _seenDown = true;
+
+            int px = 0, py = 0;
+            try { (px, py) = GetCursorPhysical(); } catch { }
+
             if (_seenDown && !down)
             {
+                // RELEASE. Must ALWAYS resolve here even if the raycast throws,
+                // otherwise the drop is lost and the box strands. Fall back to
+                // a safe point rather than skipping the drop.
+                RhinoView view = null;
+                try { view = ViewAt(px, py); } catch { }
                 if (view != null)
                 {
-                    var (pt, normal, hitId) = ProjectWithNormal(view, px, py);
+                    var pt = Point3d.Origin; var normal = Vector3d.ZAxis; var hitId = Guid.Empty;
+                    try { (pt, normal, hitId) = ProjectWithNormal(view, px, py); } catch { }
                     var spin = Preview?.SpinRadians ?? 0;
                     Stop(disablePreview: false); // leave the cube at the drop point
-                    OnDrop?.Invoke(view, pt, normal, spin, hitId);
+                    try { OnDrop?.Invoke(view, pt, normal, spin, hitId); }
+                    catch (Exception ex) { try { BkLog.W("DragSession OnDrop: " + ex.Message); } catch { } }
                 }
                 else
                 {
                     Stop(disablePreview: true);
-                    OnCancel?.Invoke();
+                    try { OnCancel?.Invoke(); } catch { }
                 }
                 return;
             }
 
-            if (view != null && Preview != null)
+            // Preview follow — best-effort; a stale-mesh raycast error here is
+            // harmless (we just skip this frame's preview update).
+            try
             {
-                var (pt, normal, hitId) = ProjectWithNormal(view, px, py);
-                Preview.Target = pt;
-                Preview.Normal = normal;
-                // Surface the hovered object in the preview so the user
-                // sees "drop on Chrome Side Table" instead of guessing
-                // whether the material will land somewhere useful.
-                Preview.HoverTargetName = hitId == Guid.Empty
-                    ? null
-                    : (RhinoDoc.ActiveDoc?.Objects?.Find(hitId)?.Attributes?.Name);
-                view.Redraw();
-                _lastView = view;
+                var view = ViewAt(px, py);
+                if (view != null && Preview != null)
+                {
+                    var (pt, normal, hitId) = ProjectWithNormal(view, px, py);
+                    Preview.Target = pt;
+                    Preview.Normal = normal;
+                    // Surface the hovered object in the preview so the user
+                    // sees "drop on Chrome Side Table" instead of guessing.
+                    Preview.HoverTargetName = hitId == Guid.Empty
+                        ? null
+                        : (RhinoDoc.ActiveDoc?.Objects?.Find(hitId)?.Attributes?.Name);
+                    view.Redraw();
+                    _lastView = view;
+                }
             }
+            catch (Exception ex) { try { BkLog.W("DragSession Tick: " + ex.Message); } catch { } }
         }
 
         // (legacy duplicate Stop removed — see Stop(bool) at the top.)
@@ -493,6 +511,12 @@ namespace Blendkit.Rhino.Infra
             for (int t = 0; t < targets.Count; t++)
             {
                 var tgt = targets[t];
+                // A concurrent placement (from a prior drop during rapid
+                // dragging) can dispose/replace meshes this cache snapshotted
+                // at drag start — accessing them then throws. Skip such a
+                // target rather than aborting the whole raycast.
+                try
+                {
                 var m = tgt.Mesh;
                 if (m == null) continue;
                 // Lazy face-normal compute — cached on the Mesh itself,
@@ -537,6 +561,8 @@ namespace Blendkit.Rhino.Infra
                     bestNormal = nn;
                     bestHitId = tgt.TopLevelId;
                 }
+                }
+                catch { continue; } // stale/disposed mesh — skip
             }
 
             if (bestPt.HasValue) return (bestPt.Value, bestNormal, bestHitId);
