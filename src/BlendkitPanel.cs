@@ -1076,20 +1076,29 @@ namespace Blendkit.Rhino
         }
 
         // (Label, value to send) pairs. Empty value = "no filter".
+        // Mirrors the Blender add-on's search_order_by enum (__init__.py:516):
+        // default / ±created / ±bookmarks / ±score / ±working_hours / ±quality
+        // (we ship the descending variants + Oldest; ascending bookmarks/
+        // score/quality are near-useless in practice). "Best match" = the
+        // smart per-context default in SearchService (recency for empty
+        // queries, _score for keyword searches, -score,_score with a
+        // category) — forcing _score on an empty query produces near-random
+        // results, so the default must be the smart fall-through.
+        // NOTE: the old list had "-quality_count" (not a server sort field —
+        // silently degraded) and "-download_count" (not in the add-on enum);
+        // both replaced by verified fields.
         private static readonly (string Label, string Value)[] OrderOptions = new[]
         {
-            // "Best match" = smart per-context default (-last_blend_upload
-            // for empty queries, _score for keyword searches, -score,_score
-            // with a category). Forcing _score on an empty query produces
-            // near-random results, so the default has to be the smart fall-
-            // through, not the literal _score.
             ("Best match", ""),
-            ("Pure relevance (_score)", "_score"),
-            ("Recently uploaded", "-last_blend_upload"),
-            ("Popular", "-download_count"),
+            ("Newest", "-created"),
+            ("Oldest", "created"),
+            ("Most bookmarked", "-bookmarks"),
+            ("Highest quality", "-quality"),
             ("Highest BK score", "-score"),
+            ("Most complex", "-working_hours"),
+            ("Recently uploaded", "-last_blend_upload,-last_zip_file_upload"),
+            ("Pure relevance (_score)", "_score"),
             ("Free first", "-is_free"),
-            ("Quality", "-quality_count"),
         };
 
         private static readonly (string Label, string Value)[] LicenseOptions = new[]

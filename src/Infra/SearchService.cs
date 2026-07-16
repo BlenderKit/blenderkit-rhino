@@ -165,9 +165,19 @@ namespace Blendkit.Rhino.Infra
                     break;
             }
 
+            // Only ever show validated assets in Rhino — pinned for EVERY
+            // account, including validators. The Blender add-on lets
+            // validators browse uploaded/on-hold assets because they review
+            // them there; Rhino has no validation UI, so unvalidated content
+            // would just be confusing (and possibly broken for conversion).
+            qs += "+verification_status:validated";
+
             // Mirror blenderkit/search.py:decide_ordering. Behavior the user
             // expects from Blendkit:
-            //   no query + no category   → -last_blend_upload (recency)
+            //   no query + no category   → recency. Two keys: blend-based
+            //       assets sort by -last_blend_upload; zip-only assets (VDB
+            //       volumes etc.) have that null and fall through to
+            //       -last_zip_file_upload — same pair the add-on sends.
             //   has category, no query   → -score,_score (BK score, then relevance)
             //   anything else            → _score (pure ES relevance / "best match")
             //   user-picked              → respect verbatim
@@ -175,7 +185,7 @@ namespace Blendkit.Rhino.Infra
             if (!string.IsNullOrEmpty(f.Order))
                 order = f.Order;
             else if (string.IsNullOrEmpty(query) && string.IsNullOrEmpty(f.Category))
-                order = "-last_blend_upload";
+                order = "-last_blend_upload,-last_zip_file_upload";
             else if (!string.IsNullOrEmpty(f.Category))
                 order = "-score,_score";
             else
