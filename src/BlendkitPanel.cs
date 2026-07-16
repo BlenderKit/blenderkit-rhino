@@ -60,6 +60,9 @@ namespace Blendkit.Rhino
         private readonly DropDown _resolution = new DropDown();
         private readonly DropDown _order = new DropDown();
         private readonly DropDown _license = new DropDown();
+        // Max total file size (files_size_lte). Mirrors the Blender add-on's
+        // File Size filter; lets users cap download/import weight up front.
+        private readonly DropDown _fileSize = new DropDown();
         // Quality slider — Blendkit's quality_count is 0-10. 0 means
         // "any quality" (filter omitted); any positive value translates to
         // `quality_count_gte:N`.
@@ -420,6 +423,9 @@ namespace Blendkit.Rhino
             foreach (var (label, _) in LicenseOptions) _license.Items.Add(label);
             _license.SelectedIndex = 0;
 
+            foreach (var (label, _) in FileSizeOptions) _fileSize.Items.Add(label);
+            _fileSize.SelectedIndex = 0;
+
             // Quality slider 0..10 mirrors Blendkit's quality_count range.
             _quality.ValueChanged += (s, e) =>
             {
@@ -738,6 +744,17 @@ namespace Blendkit.Rhino
             }
             advanced.AddRow(licenseRow);
 
+            var fileSizeRow = new Panel();
+            {
+                var inner = new DynamicLayout();
+                inner.BeginHorizontal();
+                inner.Add(new Label { Text = "Max size:", VerticalAlignment = VerticalAlignment.Center });
+                inner.Add(_fileSize, true);
+                inner.EndHorizontal();
+                fileSizeRow.Content = inner;
+            }
+            advanced.AddRow(fileSizeRow);
+
             var qualityRow = new Panel();
             {
                 var inner = new DynamicLayout();
@@ -897,6 +914,7 @@ namespace Blendkit.Rhino
             };
             _order.SelectedIndexChanged += refire;
             _license.SelectedIndexChanged += refire;
+            _fileSize.SelectedIndexChanged += refire;
             _quality.ValueChanged += refire;
             _category.Click += (s, e) => ShowCategoryMenu();
             _gltfOnly.CheckedChanged += refire;
@@ -1106,6 +1124,18 @@ namespace Blendkit.Rhino
             ("Any license", ""),
             ("CC0 (public domain)", "cc-zero"),
             ("Royalty Free", "royalty_free"),
+        };
+
+        // Max total file size → files_size_lte (bytes). Mirrors the Blender
+        // add-on's File Size filter, as a simple max-cap dropdown.
+        private static readonly (string Label, long Bytes)[] FileSizeOptions = new[]
+        {
+            ("Any size", 0L),
+            ("≤ 1 MB", 1L * 1024 * 1024),
+            ("≤ 5 MB", 5L * 1024 * 1024),
+            ("≤ 10 MB", 10L * 1024 * 1024),
+            ("≤ 50 MB", 50L * 1024 * 1024),
+            ("≤ 100 MB", 100L * 1024 * 1024),
         };
 
         private static readonly (string Label, string Value)[] QualityOptions = new[]
@@ -2959,9 +2989,10 @@ namespace Blendkit.Rhino
                 if (dd.SelectedIndex <= 0) return;
                 AddChip(prefix + ": " + OptionLabel(dd), () => dd.SelectedIndex = 0);
             }
-            // license + order are server-wide and always meaningful.
+            // license + order + max-size are server-wide and always meaningful.
             ChipForDropdown(_license, "license");
             ChipForDropdown(_order,   "order");
+            ChipForDropdown(_fileSize, "max size");
             // style applies to both model and material (under different
             // server fields, handled by BuildUrlQuery).
             if (isModelLike || isMaterial) ChipForDropdown(_style, "style");
@@ -3019,6 +3050,7 @@ namespace Blendkit.Rhino
                 _quality.Value = 0;
                 _license.SelectedIndex = 0;
                 _order.SelectedIndex = 0;
+                _fileSize.SelectedIndex = 0;
                 _style.SelectedIndex = 0;
                 _condition.SelectedIndex = 0;
                 _polycount.SelectedIndex = 1; // back to the "≤10k" default
@@ -3205,6 +3237,8 @@ namespace Blendkit.Rhino
                 BookmarksOnly = _bookmarksOnly.Checked == true,
                 Order = Sel(OrderOptions, _order.SelectedIndex),
                 License = Sel(LicenseOptions, _license.SelectedIndex),
+                FileSizeMaxBytes = _fileSize.SelectedIndex >= 0 && _fileSize.SelectedIndex < FileSizeOptions.Length
+                    ? FileSizeOptions[_fileSize.SelectedIndex].Bytes : 0,
                 QualityMin = _quality.Value, // 0..10; 0 means "any"
                 Category = _categorySlug ?? "",
                 AuthorId = _activeAuthorId,

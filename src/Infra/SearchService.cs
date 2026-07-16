@@ -25,6 +25,10 @@ namespace Blendkit.Rhino.Infra
             public bool GltfOnly = true;
             public bool FreeOnly;
             public bool Animated;
+            // Max total file size in bytes (files_size_lte). 0 = any. Mirrors
+            // the Blender add-on's search_file_size (common to all types) —
+            // lets users cap download/import weight up front.
+            public long FileSizeMaxBytes;
             // Login-only: filter to assets the current user has bookmarked.
             // Mirrors Blender's `bookmarks_rating:1` URL filter.
             public bool BookmarksOnly;
@@ -84,6 +88,7 @@ namespace Blendkit.Rhino.Infra
             // (build_query_common in blenderkit/search.py)
             if (f.FreeOnly) qs += "+is_free:true";
             if (f.BookmarksOnly) qs += "+bookmarks_rating:1";
+            if (f.FileSizeMaxBytes > 0) qs += $"+files_size_lte:{f.FileSizeMaxBytes}";
             if (!string.IsNullOrEmpty(f.License)) qs += "+license:" + f.License;
             // Blendkit's filter syntax uses suffix _gte/_lte rather than
             // operators (`+key_gte:value`, not `+key:>=value`).
