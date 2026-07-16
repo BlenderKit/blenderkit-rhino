@@ -1,193 +1,201 @@
 # Blendkit for Rhino 8
 
-Rhino 8 port of the [Blendkit](https://www.blendkit.com/) (formerly BlenderKit)
-asset browser — search, preview, and drag-drop download + import of thousands of
-free and paid 3D models, materials, and HDR environments, right inside Rhino.
+[Blendkit](https://www.blendkit.com/) (formerly BlenderKit) brings thousands of
+free and paid 3D models, materials, and HDR environments straight into Rhino 8.
+Search the library in a dockable panel, then drag and drop assets into your
+scene.
 
 ![The Blendkit panel in Rhino 8 — searching, importing, and placing a model](docs/screenshot.png)
 
-- Search with the full filter set, categories, ratings, bookmarks, login.
-- Drag-drop or point-based placement, with an in-viewport preview box while you drag.
-- Assets download as `.gltf` / `.glb` and import via Rhino 8's native loader.
-- Materials are converted to Rhino's PBR material on import.
-- Comments and notifications open on blendkit.com in a browser.
-- Upload is **not** supported in Rhino — use the Blender add-on to upload.
+**What you can do:**
+
+- Search thousands of assets, with filters, categories, ratings, and bookmarks.
+- Drag a model from the panel and drop it in the viewport — it downloads,
+  converts, and lands exactly where you dropped it.
+- Drop the same asset again and it places instantly as a shared block instance.
+- Import materials as native Rhino PBR materials, and HDRs as viewport
+  environments.
+- Log in with your blendkit.com account for the full asset library.
+
+**Not supported in Rhino (yet):** uploading assets — use the
+[Blender add-on](https://github.com/BlenderKit/blenderkit) for that. Comments
+and notifications open on blendkit.com in your browser.
 
 ## Install
 
-Blendkit is published on the Rhino **Package Manager** (Yak), so you don't have
-to build anything to use it:
+Blendkit is on the Rhino **Package Manager**, so there is nothing to build:
 
 1. In Rhino 8, run the `PackageManager` command (or open **Tools ▸ Package
    Manager**).
-2. Search for **Blendkit** (searching the old name **BlenderKit** finds it too).
-3. Select it, click **Install**, then **restart Rhino**.
-4. Open the panel: run the `Blendkit` command, or pick it under
-   **Panels ▸ Blendkit**.
-5. Click **Login** in the panel to connect your blendkit.com account (this opens
-   a browser to authorize).
+2. Search for **Blendkit** (the old name **BlenderKit** finds it too) and click
+   **Install**.
+3. Restart Rhino.
+4. Run the `Blendkit` command, or open **Panels ▸ Blendkit**, to show the panel.
+5. Click **Login** in the panel — a browser window opens so you can authorize
+   your blendkit.com account.
 
-Rhino for **Windows and macOS** are both supported (Apple Silicon included). The
-package bundles the Go helper client and the Blender export recipes, so the first
-model import can take a few seconds while the asset is converted to glTF on your
-machine.
+Works on Windows and macOS, Apple Silicon included.
+
+**Good to know:** many assets are delivered as Blender files and converted to
+glTF on your machine the first time you use them. For that you need
+[Blender](https://www.blender.org/download/) installed — the plug-in will point
+you to the download if it can't find it. Conversion usually takes a few seconds
+per asset and only happens once; after that the asset is cached locally.
 
 ## Status
 
-Blendkit for Rhino is **experimental / alpha**, but it already covers almost all
-of the functionality of the original Blender Blendkit add-on: full-featured
-search and filters, categories, login, ratings, bookmarks, per-asset-type
-handling (models, materials, HDRIs), an in-viewport drag-drop preview, and
-download + import. Upload is the main intentional exception — do that from the
-Blender add-on.
+Blendkit for Rhino is **alpha** software. It already covers most of what the
+Blender add-on does: search and filters, categories, login, ratings, bookmarks,
+models, materials and HDRIs, drag-drop placement with a live preview box, and
+shared block instances for repeated drops. Uploading is the main intentional
+gap.
 
-### Known issues & caveats
+### Known issues
 
-Rendering is the least-finished area, so treat it as a preview rather than a
-final result:
+Rendering is the least-finished area — treat imported assets as a preview, not
+a final result:
 
-- **Materials may not match the original.** Assets are authored for Blender's
-  Cycles/EEVEE and converted to Rhino's PBR material on import. The conversion is
-  approximate: base color, roughness, metalness, and normal/texture maps usually
-  carry over, but procedural (shader-node) materials, displacement, and some
-  texture blends won't reproduce faithfully. Expect to touch materials up before
-  a final render.
-- **Rhino Cycles (Raytraced mode) can be slow to start.** The first time you
-  switch a viewport to Raytraced after importing assets, Cycles has to compile
-  shaders and upload textures, which can take a while before the image begins to
-  refine. It's faster on subsequent runs.
-- Assets are converted to `.glb` on your machine the first time you use them, so
-  the occasional `.blend` that doesn't convert cleanly may import incompletely.
-- **Download / convert can stall.** The download → Blender-convert → import
-  pipeline is still flaky: a job sometimes sits in "Converting…" (or another
-  intermediate state) and doesn't finish. A cold Blender launch per convert is
-  slow, and there is no timeout/retry yet. If a job hangs, cancel it from the
-  Downloads popup and retry; the asset usually converts on a second attempt.
+- **Materials are approximate.** Assets are authored for Blender's
+  Cycles/EEVEE renderers and converted to Rhino PBR materials on import. Base
+  color, roughness, metalness, and normal maps usually survive the trip;
+  procedural (shader-node) materials, displacement, and complex texture blends
+  do not. Expect to polish materials before a final render.
+- **The first Raytraced view is slow.** The first time you switch a viewport
+  to Raytraced after importing, Rhino's Cycles compiles shaders and uploads
+  textures before the image starts refining. Later switches are much faster.
+- **The occasional asset converts incompletely.** Some `.blend` files don't
+  survive the glTF conversion cleanly and import with missing parts.
+- **If a download ever gets stuck,** it clears itself after a couple of
+  minutes. You can also cancel it earlier — click the ✕ on its preview box in
+  the viewport, or use the Downloads popup in the panel.
 
 Found a bug? Please report it at
-<https://github.com/BlenderKit/blendkit-rhino/issues> — it's an alpha and
-reports genuinely help.
+<https://github.com/BlenderKit/blendkit-rhino/issues> — reports genuinely help
+at this stage.
 
 ---
 
 ## Building from source (developers)
 
-The rest of this document is for working on the plug-in itself; end users only
-need the **Install** section above.
+Everything below is for working on the plug-in itself. End users only need the
+**Install** section above.
 
 ### Repo layout
 
 ```
 .
-├── src/                   # C# plugin shell (.rhp) — internal namespace
-│                          # Blendkit.Rhino, output BlendkitRhino.rhp
+├── src/                   # C# plugin shell (.rhp) — namespace Blendkit.Rhino,
+│                          # output BlendkitRhino.rhp
+├── bk_client/             # git submodule: the shared Blendkit Go client
+│                          # (github.com/BlenderKit/bk_client) + Blender recipes
 ├── python/
 │   └── blendkit_rhino/    # helper scripts (asset extraction, ScriptEditor dev shim)
 ├── deploy/
-│   ├── deploy_rhino.bat   # Windows: copy built artifacts into Rhino's Plug-ins folder
+│   ├── deploy_rhino.bat   # Windows: build + copy artifacts into Rhino's Plug-ins folder
 │   ├── deploy_rhino.sh    # macOS:   same, for Rhino 8.app
 │   └── manifest*.yml      # Yak (Rhino Package Manager) metadata
 ├── docs/                  # README assets (screenshot)
 └── tests/                 # xUnit tests (CI-runnable, no Rhino required)
 ```
 
-Everything — the user-visible name (panel title, command names, package title)
-and the internal identifiers (namespace `Blendkit.Rhino`, classes, file names,
-assembly `BlendkitRhino`) — is **Blendkit**, the current company/brand name
-(formerly **BlenderKit**). The plug-in GUID and the shared on-disk interop paths
+Naming: the user-visible name and the internal identifiers (namespace
+`Blendkit.Rhino`, assembly `BlendkitRhino`) are all **Blendkit**, the current
+brand (formerly **BlenderKit**). The shared on-disk interop paths
 (`~/blenderkit_data`, `%APPDATA%\BlenderKit\config.json`) deliberately keep the
-old spelling so existing installs and the Blender add-on's shared cache/config
-keep working.
+old spelling so existing installs and the Blender add-on's shared cache keep
+working.
 
-### Where the Go client lives
+### The Go client
 
-The Go HTTP client is **shared** with the [Blender add-on](https://github.com/BlenderKit/blenderkit)
-and lives there — this repo no longer ships its own copy. The deploy
-script locates the client by, in order:
+The Go HTTP client is shared across all Blendkit integrations (Blender, Rhino,
+and others) and lives in its own repo,
+[bk_client](https://github.com/BlenderKit/bk_client), included here as a git
+submodule. After cloning, fetch it with:
+
+```
+git submodule update --init
+```
+
+The deploy scripts locate the client source/binary in this order:
 
 1. `BLENDKIT_CLIENT_DIR` environment variable (explicit override),
-2. `../client/` (legacy sibling layout, kept for existing dev checkouts),
-3. `../source_addon/blenderkit/client/` (current sibling-repo layout —
-   Blender addon repo named `source_addon`),
-4. `../source_blenderkit_addon/blenderkit/client/` (older sibling-repo
-   name; kept as a fallback for existing checkouts),
-5. `../blenderkit/client/` (Blender addon checked out inside this repo).
+2. `bk_client/client/` — the submodule (macOS script; the canonical location),
+3. legacy sibling-checkout paths (`../client/`,
+   `../source_addon/blenderkit/client/`, …) kept for older dev setups.
 
-The macOS deploy script (`deploy_rhino.sh`) auto-builds the Go client
-on each run via `go build`, force-targeting the host architecture
-from `uname -m` (so an Apple Silicon Mac with a Rosetta-installed
-amd64 Go still produces a native arm64 binary). Pass `--noclient` to
-reuse a pre-built binary instead. The Windows script (`deploy_rhino.bat`)
-still expects a pre-built `client.exe`.
+On macOS, `deploy_rhino.sh` builds the client on every run (`go build`, output
+`bk_client-macos-<arch>`), targeting the host architecture so an Apple Silicon
+Mac always gets a native arm64 binary; pass `--noclient` to reuse the existing
+binary. On Windows, `deploy_rhino.bat` expects a pre-built client — build it
+once in `bk_client/client/` with `go build`, or set `BLENDKIT_CLIENT_DIR`.
+
+Note: the client **embeds** the Blender recipe scripts (`tools/*.py`) at build
+time via `go:embed`, so after editing a recipe you must rebuild the client.
+(The Rhino plug-in also sends its recipe by absolute path, which overrides the
+embedded copy — but rebuilding keeps the two in sync.)
 
 ### Dev workflow
 
-1. Install Rhino 8 (Windows or macOS — both targets are supported).
-2. Make sure the Blender add-on repo is checked out as a sibling
-   (`../source_addon/blenderkit/`) so the client can be located. The
-   macOS script will `go build` it for you; on Windows build
-   `client.exe` once with `go build` in that folder. Or set
-   `BLENDKIT_CLIENT_DIR` to point at it.
-3. Run `deploy/deploy_rhino.bat` (Windows) or `deploy/deploy_rhino.sh`
-   (macOS) to build the .rhp and copy artifacts into Rhino's plug-ins
-   folder (e.g. `%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit\`).
-   On macOS the script also mirrors the deploy into the Yak-installed
-   package dir under `~/Library/Application Support/McNeel/Rhinoceros/
-   packages/8.0/Blendkit/<version>/` if one exists, since Rhino
-   loads the Yak copy in preference to `Plug-ins/`. Pass `--noyak` to
-   skip that mirror.
-4. First install only: Rhino → Tools → Options → Plug-ins → Install...
-   → pick the `.rhp` (or install the `.yak` via `PackageManager`).
-   Subsequent runs: just re-run the deploy script and restart Rhino
-   (Rhino does not reload plug-ins cleanly).
-5. macOS-only: if `dotnet` isn't installed, `deploy_rhino.sh` skips
-   the .rhp build and reuses whatever .rhp is already on disk (e.g.
-   one built on a Windows machine and copied over). The Go client and
-   Python helpers still get refreshed each run, which covers most of
-   the day-to-day iteration loop.
+1. Install Rhino 8 (Windows or macOS) and a Go toolchain.
+2. `git submodule update --init` to fetch the client.
+3. Run `deploy/deploy_rhino.sh` (macOS) or `deploy/deploy_rhino.bat` (Windows).
+   It builds the client and the `.rhp`, then copies both into Rhino's plug-ins
+   folder (e.g. `%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\Blendkit\`). On macOS
+   it also mirrors the deploy into the Yak-installed package folder if one
+   exists — Rhino loads the Yak copy in preference to `Plug-ins/`, so a deploy
+   that skipped it would silently run stale code. Pass `--noyak` to skip the
+   mirror.
+4. First install only: Rhino → **Tools ▸ Options ▸ Plug-ins ▸ Install…** and
+   pick the `.rhp` (or install the `.yak` via `PackageManager`). After that,
+   just re-run the deploy script and restart Rhino — Rhino cannot reload a
+   plug-in without a restart.
+5. macOS only: if `dotnet` is not installed, `deploy_rhino.sh` skips the `.rhp`
+   build and reuses the one already on disk (e.g. built on a Windows machine).
+   The client and Python helpers are still refreshed, which covers most
+   day-to-day iteration.
 
-Iterating on pure-Python UI code can be done inside Rhino's
-ScriptEditor with `importlib.reload(module)` to skip the restart for
-small changes.
+Pure-Python helper code can be iterated inside Rhino's ScriptEditor with
+`importlib.reload(module)` — no restart needed for small changes.
+
+### Testing without a mouse
+
+`_-BlendkitSimDrop 8 chair` runs a search and then dispatches eight simulated
+drag-drops through the real pipeline (drag tracking, download, convert,
+import) with a scripted mouse — useful for reproducing drag bugs headlessly.
+Progress is logged to `~/blenderkit_data/client/rhino_panel.log` (look for
+`[simdrop]` and `[dragtrace]` lines).
 
 ## Releasing to the Yak package server
 
-One-shot release script:
+One-shot release script (Windows):
 
 ```cmd
 deploy\release.bat 0.1.2
 ```
 
-This refuses to run if the working tree is dirty, then bumps the
-version in `BlendkitRhino.csproj` and both `manifest*.yml` files,
-commits the bump (`release: 0.1.2`), runs `deploy_rhino.bat` to
-build + pack the **Windows** `.yak`, runs `pack_mac.bat` to
-cross-build + pack the **macOS** `.yak` (darwin/arm64 client +
-`net7.0` `.rhp`), `yak push`es both to https://yak.rhino3d.com,
-and tags `v0.1.2` in git (pushed to `origin`).
+It refuses to run on a dirty working tree, bumps the version in
+`BlendkitRhino.csproj` and both `manifest*.yml` files, commits the bump
+(`release: 0.1.2`), builds and packs the **Windows** `.yak`
+(`deploy_rhino.bat`) and the **macOS** `.yak` (`pack_mac.bat`, which
+cross-builds the darwin/arm64 client), pushes both to
+<https://yak.rhino3d.com>, and tags `v0.1.2` in git.
 
-Requires `yak login` to have run at least once (token cached at
-`%APPDATA%\McNeel\yak.yml`) and Go on `PATH` (or at
-`C:\Program Files\Go\bin\go.exe`) for the darwin client
-cross-compile. If push fails with "error retrieving your cached
-token", run `yak login` and re-invoke `release.bat` with the
-same version — the local commit is already in place; the build
-steps will produce the same `.yak` files.
+Prerequisites: `yak login` run at least once (token cached at
+`%APPDATA%\McNeel\yak.yml`) and Go on `PATH` for the darwin cross-compile. If
+the push fails with "error retrieving your cached token", run `yak login` and
+re-invoke `release.bat` with the same version — the version commit is already
+in place and the build steps reproduce the same `.yak` files.
 
-The Rhino kill behaviour from `deploy_rhino.bat` applies — Rhino
-will be closed during the deploy step so the `.rhp` can be copied
-into the local plug-ins folder.
+Note that `deploy_rhino.bat` closes Rhino during the deploy step so the `.rhp`
+can be copied into the local plug-ins folder.
 
-If you only need to rebuild the macOS `.yak` (e.g. you fixed
-something Mac-specific between releases without bumping the
-version), run `deploy\pack_mac.bat` directly. It produces
-`build\Release\packages\blendkit-<version>-rh8_0-mac.yak`,
-which you can then `yak push` manually. The packer also patches
-the zip's `external_attr` on `client/client` to `0o100755` so
-the Mach-O binary is executable on the user's Mac — `yak.exe`
-running on Windows otherwise leaves it at `0` and the binary
-won't run on extract.
+To rebuild only the macOS `.yak` between releases, run `deploy\pack_mac.bat`
+directly — it produces
+`build\Release\packages\blendkit-<version>-rh8_0-mac.yak` for a manual
+`yak push`. The packer patches the zip's `external_attr` on the client binary
+to `0o100755` so the Mach-O executable keeps its execute bit — `yak.exe` on
+Windows would otherwise leave it at `0` and the client wouldn't run after
+extraction on a Mac.
 
-On macOS you can also produce the mac `.yak` directly from
-`deploy_rhino.sh` (it packs with `yak build --platform mac` by
-default; pass `--nopack` to skip).
+On macOS, `deploy_rhino.sh` packs the mac `.yak` itself by default
+(`yak build --platform mac`); pass `--nopack` to skip.
